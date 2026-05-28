@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DIMA — Design Integrity & Manufacturability AI</title>
+  <meta name="description" content="AI 기반 2D 도면 검증 및 3D 사출성형성 예측 플랫폼" />
+  <!-- 오프라인 패키지: Google Fonts 대신 로컬 폰트 CSS 사용 -->
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- ───── HEADER ───── -->
+  <header id="app-header">
+    <div class="header-logo">
+      <svg class="logo-hex" viewBox="0 0 40 40" fill="none">
+        <polygon points="20,2 37,11 37,29 20,38 3,29 3,11" stroke="#00d4ff" stroke-width="2" fill="rgba(0,212,255,0.08)"/>
+        <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" fill="#00d4ff" font-size="11" font-family="Outfit" font-weight="700">AI</text>
+      </svg>
+      <div class="logo-text-wrap">
+        <span class="logo-main">DIMA</span>
+        <span class="logo-sub">Design Intelligence</span>
+      </div>
+    </div>
+
+    <nav class="header-nav" role="navigation">
+      <button class="nav-tab active" data-tab="2d" id="tab-2d" aria-label="2D 검증 탭">
+        <span class="tab-icon">📐</span><span>2D 검증</span>
+      </button>
+      <button class="nav-tab" data-tab="3d" id="tab-3d" aria-label="3D 검증 탭">
+        <span class="tab-icon">🧊</span><span>3D 검증</span>
+      </button>
+      <button class="nav-tab" data-tab="report" id="tab-report" aria-label="리포트 탭">
+        <span class="tab-icon">📊</span><span>리포트</span>
+      </button>
+    </nav>
+
+    <div class="header-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">준비</span>
+    </div>
+  </header>
+
+  <!-- ───── MAIN ───── -->
+  <main id="app-main">
+
+    <!-- ══════ 2D TAB ══════ -->
+    <div class="tab-content active" id="content-2d">
+      <div class="workspace">
+
+        <aside class="panel panel-left" id="panel-2d">
+          <div class="panel-header">
+            <h2>2D 도면 검증</h2>
+            <span class="panel-badge">AutoCAD DXF</span>
+          </div>
+
+          <div class="upload-zone" id="upload-zone-2d">
+            <div class="upload-icon">📁</div>
+            <p class="upload-text">DXF 파일을 드래그하거나<br/>클릭하여 업로드</p>
+            <p class="upload-hint">.dxf 형식 지원</p>
+            <input type="file" id="file-input-2d" accept=".dxf" hidden />
+          </div>
+
+          <div class="file-info-bar" id="file-info-2d" style="display:none"></div>
+
+          <button class="btn btn-primary" id="btn-analyze-2d" style="display:none">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            분석 시작
+          </button>
+
+          <div class="results-panel" id="results-2d" style="display:none">
+            <div class="score-card" id="score-card-2d">
+              <div class="score-ring-wrap">
+                <svg class="score-ring" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="42" class="ring-bg"/>
+                  <circle cx="50" cy="50" r="42" class="ring-fill" id="ring-fill-2d"/>
+                </svg>
+                <div class="score-center">
+                  <div class="score-number" id="score-num-2d">--</div>
+                  <div class="score-label-sm">/ 100</div>
+                </div>
+              </div>
+              <div class="score-grade" id="score-grade-2d">--</div>
+            </div>
+            <div class="issues-list" id="issues-list-2d"></div>
+          </div>
+        </aside>
+
+        <section class="panel panel-viewer" id="viewer-2d-wrap">
+          <div class="viewer-placeholder" id="placeholder-2d">
+            <div class="placeholder-glyph">📐</div>
+            <p>DXF 파일을 업로드하면<br/>도면이 여기에 표시됩니다</p>
+          </div>
+          <canvas id="canvas-2d" style="display:none; width:100%; height:100%;"></canvas>
+          <div class="viewer-toolbar" id="toolbar-2d" style="display:none">
+            <button class="tool-btn" id="btn-fit-2d" title="화면 맞춤">⊡</button>
+            <button class="tool-btn" id="btn-zin-2d" title="확대">＋</button>
+            <button class="tool-btn" id="btn-zout-2d" title="축소">－</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ══════ 3D TAB ══════ -->
+    <div class="tab-content" id="content-3d">
+      <div class="workspace">
+
+        <aside class="panel panel-left" id="panel-3d">
+          <div class="panel-header">
+            <h2>3D 사출성형 분석</h2>
+            <span class="panel-badge">STL</span>
+          </div>
+
+          <div class="upload-zone" id="upload-zone-3d">
+            <div class="upload-icon">🗂️</div>
+            <p class="upload-text">STL 파일을 드래그하거나<br/>클릭하여 업로드</p>
+            <p class="upload-hint">.stl, .stp, .step 형식 지원</p>
+            <input type="file" id="file-input-3d" accept=".stl,.stp,.step" hidden />
+          </div>
+
+          <div class="material-section" id="material-section" style="display:none">
+            <p class="section-label">소재 선택</p>
+            <div class="material-grid">
+              <button class="mat-btn active" data-mat="ABS">ABS<br/><small>0.5%</small></button>
+              <button class="mat-btn" data-mat="PC">PC<br/><small>0.6%</small></button>
+              <button class="mat-btn" data-mat="PP">PP<br/><small>1.5%</small></button>
+              <button class="mat-btn" data-mat="POM">POM<br/><small>2.0%</small></button>
+            </div>
+          </div>
+
+          <div class="material-section" id="axis-section" style="display:none">
+            <p class="section-label">탈형 방향 (Pull Axis)</p>
+            <div class="material-grid">
+              <button class="axis-btn" data-axis="X">X 축</button>
+              <button class="axis-btn" data-axis="Y">Y 축</button>
+              <button class="axis-btn active" data-axis="Z">Z 축</button>
+              <button class="btn btn-outline" id="btn-flip-axis" style="grid-column: span 3; margin-top: 5px; font-size: 0.8rem;">↕ 180도 반전 (방향 뒤집기)</button>
+            </div>
+          </div>
+
+          <div class="file-info-bar" id="file-info-3d" style="display:none"></div>
+
+          <button class="btn btn-primary" id="btn-analyze-3d" style="display:none">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12L12 2l10 10"/><path d="M12 2v20"/></svg>
+            사출성형 분석
+          </button>
+
+          <div class="results-panel" id="results-3d" style="display:none">
+            <div class="score-card" id="score-card-3d">
+              <div class="score-ring-wrap">
+                <svg class="score-ring" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="42" class="ring-bg"/>
+                  <circle cx="50" cy="50" r="42" class="ring-fill" id="ring-fill-3d"/>
+                </svg>
+                <div class="score-center">
+                  <div class="score-number" id="score-num-3d">--</div>
+                  <div class="score-label-sm">/ 100</div>
+                </div>
+              </div>
+              <div class="score-grade" id="score-grade-3d">--</div>
+            </div>
+            <div class="legend-row" id="legend-draft">
+              <span class="leg-dot green"></span><span>구배 OK</span>
+              <span class="leg-dot yellow"></span><span>주의</span>
+              <span class="leg-dot red"></span><span>언더컷</span>
+            </div>
+            <div class="legend-row" id="legend-flow" style="display:none">
+              <span class="leg-dot green"></span><span>충진 완료</span>
+              <span class="leg-dot yellow"></span><span>유동 중간</span>
+              <span class="leg-dot red"></span><span>미성형 위험</span>
+              <span class="leg-dot orange"></span><span>게이트</span>
+            </div>
+            <div class="mold-features" id="gate-info-3d" style="display:none; border-color: var(--cyan);">
+              <div class="feature-card" style="background: rgba(0, 212, 255, 0.05); border: 1px solid var(--border);">
+                <div class="feature-title" style="color: var(--cyan);">🎯 설정된 게이트</div>
+                <div class="feature-desc">
+                  <span id="gate-coords">X: -, Y: -, Z: -</span><br/>
+                  <small id="gate-flow-status" style="color: var(--green);">클릭하여 주입구 설정 가능</small>
+                </div>
+              </div>
+            </div>
+            <div class="mold-features" id="mold-features-3d" style="display:none">
+              <!-- Dynamically populated -->
+            </div>
+            <div class="issues-list" id="issues-list-3d"></div>
+          </div>
+        </aside>
+ 
+        <section class="panel panel-viewer" id="viewer-3d-wrap">
+          <div class="viewer-placeholder" id="placeholder-3d">
+            <div class="placeholder-glyph">🧊</div>
+            <p>STL 또는 STP 파일을 업로드하면<br/>3D 모델이 여기에 표시됩니다</p>
+          </div>
+          <div id="canvas-3d" style="display:none; width:100%; height:100%;"></div>
+          
+          <!-- Flow Simulation Controls -->
+          <div class="flow-controls" id="flow-controls" style="display:none">
+            <button class="flow-btn" id="btn-play-flow" title="유동 시뮬레이션 재생">▶</button>
+            <button class="flow-btn" id="btn-pause-flow" title="일시정지" style="display:none">❚❚</button>
+            <input type="range" class="flow-slider" id="flow-slider" min="0" max="100" value="0" />
+            <span class="flow-time" id="flow-time-display">0.0s / 2.0s</span>
+            <select id="flow-speed-select" class="flow-speed-select" title="재생 속도" style="background: rgba(8,12,24,0.95); color: var(--cyan); border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px; font-size: 0.72rem; margin-left: 8px; cursor: pointer; outline: none;">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1.0x</option>
+              <option value="2">2.0x</option>
+            </select>
+          </div>
+
+          <!-- Parting Line Controls -->
+          <div class="flow-controls" id="parting-controls" style="display:none; bottom: 75px;">
+            <span style="color: var(--cyan); font-size: 0.8rem; font-weight: bold; margin-right: 8px;">파팅 평면 높이:</span>
+            <input type="range" class="flow-slider" id="parting-slider" min="0" max="100" value="50" />
+            <span id="parting-val-display" style="color: #fff; font-size: 0.8rem; font-weight: bold; margin-left: 8px; min-width: 40px;">50%</span>
+          </div>
+
+          <div class="viewer-toolbar" id="toolbar-3d" style="display:none">
+            <button class="tool-btn" id="btn-wireframe" title="와이어프레임">⬡</button>
+            <button class="tool-btn" id="btn-solid" title="솔리드">⬢</button>
+            <span class="tool-sep"></span>
+            <button class="tool-btn active" id="btn-draft-overlay" title="구배각 오버레이">🎨</button>
+            <button class="tool-btn" id="btn-flow-overlay" title="사출 유동 분석">🌊</button>
+            <button class="tool-btn" id="btn-set-gate" title="게이트 위치 지정">🎯</button>
+            <button class="tool-btn" id="btn-core-overlay" title="금형 코어 가이드">🔩</button>
+            <button class="tool-btn" id="btn-parting-overlay" title="파팅 라인 표시">〰</button>
+            <button class="tool-btn" id="btn-reset-cam" title="카메라 초기화">⟳</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ══════ REPORT TAB ══════ -->
+    <div class="tab-content" id="content-report">
+      <div class="report-wrap">
+        <div class="report-header-bar">
+          <h1>📋 설계 검증 통합 리포트</h1>
+          <button class="btn btn-outline" id="btn-export">📄 내보내기</button>
+        </div>
+        <div id="report-body">
+          <div class="report-empty">
+            <div style="font-size:3rem">📋</div>
+            <p>2D 또는 3D 분석을 먼저 완료해주세요.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ───── LOADING OVERLAY ───── -->
+  <div class="loading-overlay" id="loading-overlay" style="display:none">
+    <div class="loading-box">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loading-text">분석 중...</div>
+      <div class="progress-track"><div class="progress-bar" id="progress-bar"></div></div>
+    </div>
+  </div>
+
+  <!-- ───── TOAST ───── -->
+  <div class="toast" id="toast"></div>
+
+  <!-- ───── SCRIPTS ───── -->
+  <!-- 오프라인 라이브러리 (libs/ 폴더) -->
+  <script src="libs/three.min.js"></script>
+  <script src="libs/OrbitControls.js"></script>
+  <script src="libs/STLLoader.js"></script>
+  <!-- 앱 모듈 -->
+  <script src="js/dxf-analyzer.js?v=2"></script>
+  <script src="js/stl-analyzer.js?v=2"></script>
+  <script src="js/main.js?v=2"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+# Compiled binary
+DIMA.exe
+launcher.cs
+
+# Temp / personal notes
+새 텍스트 문서.txt
+
+# Large reference PDF (optional - remove this line if you want to track it)
+*.pdf
