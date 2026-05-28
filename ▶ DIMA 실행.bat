@@ -13,6 +13,13 @@ set DIR=%~dp0
 :: index.html 절대 경로
 set HTML=%DIR%index.html
 
+:: DIMA.exe 실행 파일이 있으면 로컬 HTTP 서버 실행
+if exist "%DIR%DIMA.exe" (
+    echo  [0] DIMA.exe (로컬 HTTP 서버) 실행 중...
+    start "" "%DIR%DIMA.exe"
+    goto :success
+)
+
 echo  [1] Chrome으로 실행 시도 중...
 set CHROME="%ProgramFiles%\Google\Chrome\Application\chrome.exe"
 set CHROME86="%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"

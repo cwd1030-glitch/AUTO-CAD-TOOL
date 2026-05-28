@@ -20,9 +20,16 @@ const DXFAnalyzer = (() => {
     function flush() { if (cur) { entities.push(cur); cur = null; } }
 
     while (i < lines.length - 1) {
-      const code = parseInt(lines[i].trim(), 10);
-      const val  = lines[i + 1].trim();
+      if (lines[i] === undefined || lines[i+1] === undefined) {
+        i += 2;
+        continue;
+      }
+      const codeStr = lines[i].trim();
+      const valStr  = lines[i + 1].trim();
       i += 2;
+
+      const code = parseInt(codeStr, 10);
+      const val  = valStr;
 
       if (code === 0) {
         flush();
@@ -274,6 +281,35 @@ const DXFAnalyzer = (() => {
     if (!hasHatchLayer && layers.length > 2) {
       issues.push({ level:'info', title:'해칭 레이어 없음', desc:'단면도가 있다면 HATCH 레이어에서 해칭을 확인해주세요.' });
     }
+
+    // Check 9: Fitting Tolerance (끼워맞춤 공차 검사)
+    const hasFitTolerance = textEntities.some(e => {
+      const t = e.txt.toUpperCase();
+      return /[HKPG][56789]/.test(t) || t.includes('±') || t.includes('+0.') || t.includes('-0.');
+    });
+    if (hasFitTolerance) {
+      issues.push({ level: 'ok', title: '끼워맞춤 정밀 공차 기입 확인', desc: '도면에 IT 끼워맞춤 기호(H7, h6 등) 또는 허용 차수 공차(±, +0.x)가 반영되어 금형/기구 조립성이 향상됩니다.' });
+    } else {
+      issues.push({ level: 'warning', title: '조립부 끼워맞춤 공차 권장', desc: '금형 조립 코아부나 가이드 핀, 슬라이딩 면의 안정적인 죔새/틈새 관리를 위해 H7/h6 등 정밀 끼워맞춤 가공공차 적용을 검토하세요.' });
+    }
+
+    // Check 10: Surface Roughness (표면 거칠기/조도 검사)
+    const hasRoughness = textEntities.some(e => {
+      const t = e.txt.toUpperCase();
+      return t.includes('RA') || t.includes('RZ') || t.includes('RY') || /\d+[S]/.test(t) || t.includes('▽') || t.includes('~');
+    });
+    if (hasRoughness) {
+      issues.push({ level: 'ok', title: '표면 조도/거칠기 사양 확인', desc: '금형 조립 습합부나 성형 코어 접촉면의 표면 거칠기(Ra, Rz, S 등) 다듬질 기호가 명확히 지정되어 있습니다.' });
+    } else {
+      issues.push({ level: 'info', title: '표면 거칠기(조도) 표기 권장', desc: '정밀도 유지 및 금형 마찰 마모 수명 단축 방지를 위해 코어 조립부나 작동 슬라이드 가이드에 거칠기(▽, 6.3S 등) 지정을 권장합니다.' });
+    }
+
+    // Check 11: Gas Vent / Air Vent Design Note (가스 벤트 가이드)
+    issues.push({
+      level: 'info',
+      title: '에어 벤트(Gas Vent) 사양 확인',
+      desc: '가소화 가스 축적으로 인한 은조(Silver Streak) 및 미성형 탄화 방지를 위해 1차 런너 끝단 및 파팅라인 외곽 가스 벤트 사양이 적용되어야 합니다.'
+    });
 
     // Score
     const errorCount   = issues.filter(i=>i.level==='error').length;

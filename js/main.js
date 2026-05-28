@@ -18,6 +18,57 @@ const App = {
 ══════════════════════════════════════ */
 function $(id) { return document.getElementById(id); }
 
+function logToConsole(msg, type = 'system') {
+  const box = $('console-logs-box');
+  if (!box) return;
+  const line = document.createElement('div');
+  line.className = `log-line ${type}`;
+  line.textContent = `> [${new Date().toLocaleTimeString()}] ${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+// Hook up console collapse/expand toggle & clear button
+window.addEventListener('DOMContentLoaded', () => {
+  const consoleEl = document.querySelector('.cad-message-console');
+  const consoleHeader = document.querySelector('.console-header');
+  const btnClearLog = $('btn-clear-console');
+
+  if (consoleHeader && consoleEl) {
+    consoleHeader.addEventListener('click', (e) => {
+      // Don't toggle when clicking Clear
+      if (e.target === btnClearLog || e.target.closest('.console-clear-btn')) return;
+      consoleEl.classList.toggle('collapsed');
+    });
+  }
+  if (btnClearLog) {
+    btnClearLog.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const box = $('console-logs-box');
+      if (box) box.innerHTML = '';
+    });
+  }
+  const btnCleanupCad = $('btn-cleanup-cad');
+  if (btnCleanupCad) {
+    btnCleanupCad.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        logToConsole('백그라운드 CAD 프로세스 정리를 시작합니다...', 'info');
+        const res = await fetch('/cleanup-cad', { method: 'POST' });
+        if (res.ok) {
+          const txt = await res.text();
+          logToConsole('리소스 강제 최적화 완료: ' + txt, 'success');
+          showToast('백그라운드 CAD 프로세스가 정리되었습니다.', 'ok');
+        } else {
+          showToast('CAD 프로세스 정리 중 오류가 발생했습니다.', 'error');
+        }
+      } catch (err) {
+        logToConsole('CAD 정리 실패: ' + err.message, 'error');
+      }
+    });
+  }
+});
+
 function setStatus(state, text) {
   const dot  = $('status-dot');
   const span = $('status-text');
@@ -66,72 +117,262 @@ function switchTab(id) {
   App.currentTab = id;
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'content-' + id));
+  logToConsole(`CAD 작업공간 탭 변경: ${id.toUpperCase()}`, 'info');
 
-  if (id === 'report') buildReport();
+  if (id === 'report') {
+    buildReport();
+  } else {
+    setTimeout(triggerViewportResize, 50);
+  }
 }
 
 /* ══════════════════════════════════════
+   VIEWPORT RESIZING & SIDEBAR RESIZER
+   ══════════════════════════════════════ */
+function initSidebarResizer() {
+  document.querySelectorAll('.workspace-layout').forEach(layout => {
+    const leftPanel = layout.querySelector('.cad-model-tree-panel');
+    const rightPanel = layout.querySelector('.cad-properties-panel');
+    const leftResizer = layout.querySelector('.resizer-left');
+    const rightResizer = layout.querySelector('.resizer-right');
+
+    if (leftResizer && leftPanel) {
+      initDrag(leftResizer, (deltaX) => {
+        const currentWidth = leftPanel.offsetWidth;
+        const newWidth = Math.max(180, Math.min(500, currentWidth + deltaX));
+        leftPanel.style.width = newWidth + 'px';
+        leftPanel.style.minWidth = newWidth + 'px';
+        triggerViewportResize();
+      });
+    }
+
+    if (rightResizer && rightPanel) {
+      initDrag(rightResizer, (deltaX) => {
+        const currentWidth = rightPanel.offsetWidth;
+        const newWidth = Math.max(180, Math.min(500, currentWidth - deltaX));
+        rightPanel.style.width = newWidth + 'px';
+        rightPanel.style.minWidth = newWidth + 'px';
+        triggerViewportResize();
+      });
+    }
+  });
+}
+
+function initDrag(resizer, onDrag) {
+  resizer.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    resizer.classList.add('dragging');
+    let startX = e.clientX;
+
+    const onMouseMove = (moveEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      startX = moveEvent.clientX;
+      onDrag(deltaX);
+    };
+
+    const onMouseUp = () => {
+      resizer.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+}
+
+function triggerViewportResize() {
+  if (App.currentTab === '2d') {
+    if (App.dxf.parsed) {
+      const canvas = $('canvas-2d');
+      const wrap = canvas.parentElement;
+      if (wrap) {
+        const w = wrap.clientWidth;
+        const h = wrap.clientHeight;
+        if (w > 0 && h > 0) {
+          canvas.width = w;
+          canvas.height = h;
+          DXFAnalyzer.initCanvas(canvas, App.dxf.parsed);
+        }
+      }
+    }
+  } else if (App.currentTab === '3d') {
+    if (App.threeInit && typeof STLAnalyzer !== 'undefined' && typeof STLAnalyzer.resizeViewer === 'function') {
+      STLAnalyzer.resizeViewer();
+    }
+  }
+}
+
+window.addEventListener('resize', () => {
+  triggerViewportResize();
+});
+
+/* ══════════════════════════════════════
    2D MODULE
+
 ══════════════════════════════════════ */
-const zone2d  = $('upload-zone-2d');
 const input2d = $('file-input-2d');
 
-zone2d.addEventListener('click', () => input2d.click());
-zone2d.addEventListener('dragover',  e => { e.preventDefault(); zone2d.classList.add('drag-over'); });
-zone2d.addEventListener('dragleave', () => zone2d.classList.remove('drag-over'));
-zone2d.addEventListener('drop', e => {
-  e.preventDefault();
-  zone2d.classList.remove('drag-over');
-  const f = e.dataTransfer.files[0];
-  if (f) handle2DFile(f);
+// Allow dragging files over the 2D viewport
+window.addEventListener('DOMContentLoaded', () => {
+  initSidebarResizer();
+
+  const viewport2d = document.querySelector('#content-2d .cad-viewport-panel');
+  if (viewport2d) {
+    viewport2d.addEventListener('dragover',  e => { e.preventDefault(); viewport2d.classList.add('drag-over'); });
+    viewport2d.addEventListener('dragleave', () => viewport2d.classList.remove('drag-over'));
+    viewport2d.addEventListener('drop', e => {
+      e.preventDefault();
+      viewport2d.classList.remove('drag-over');
+      const f = e.dataTransfer.files[0];
+      if (f) handle2DFile(f);
+    });
+  }
 });
+
 input2d.addEventListener('change', () => { if (input2d.files[0]) handle2DFile(input2d.files[0]); });
 
-function handle2DFile(file) {
-  if (!file.name.toLowerCase().endsWith('.dxf')) {
-    showToast('DXF 파일만 지원됩니다.', 'error'); return;
+async function handle2DFile(file) {
+  const nameLower = file.name.toLowerCase();
+  if (!nameLower.endsWith('.dxf') && !nameLower.endsWith('.dwg')) {
+    showToast('DXF 및 DWG 파일만 지원됩니다.', 'error'); return;
   }
   App.dxf.file = file;
-  $('file-info-2d').style.display = 'flex';
-  $('file-info-2d').innerHTML = `📄 <span>${file.name}</span>&nbsp;(${(file.size/1024).toFixed(1)} KB)`;
-  $('btn-analyze-2d').style.display = 'flex';
-  showToast('DXF 파일이 로드되었습니다.', 'ok');
+  $('file-info-2d').style.display = 'block';
+  $('file-info-2d').innerHTML = `📄 ${file.name}`;
+  $('btn-analyze-2d').style.display = 'block';
+  showToast(`${nameLower.endsWith('.dwg') ? 'DWG' : 'DXF'} 파일이 로드되었습니다.`, 'ok');
+  logToConsole(`2D 도면 로드 완료: ${file.name} (${(file.size/1024).toFixed(1)} KB)`, 'info');
+
+  const isDwg = nameLower.endsWith('.dwg');
+  showLoading(isDwg ? 'DWG 도면 디코딩 및 렌더링 중...' : 'DXF 도면 분석 및 렌더링 중...');
+  setStatus('busy', '도면 로드 중');
+  
+  try {
+    let text = "";
+    if (isDwg) {
+      // C# 백엔드 서버에 DWG 변환 요청 전송
+      const buffer = await file.arrayBuffer();
+      const response = await fetch('/convert-dwg', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream'
+        },
+        body: buffer
+      });
+      
+      if (!response.ok) {
+        const isMissing = response.headers.get('X-AutoCAD-Missing') === 'true';
+        if (isMissing) {
+          const runDemo = confirm(
+            "로컬 PC에 AutoCAD가 설치되어 있지 않아 DWG 파일을 직접 해독할 수 없습니다.\n\n" +
+            "원활한 테스트를 위해 가상 변환기(시뮬레이션 모드)를 실행하시겠습니까?\n" +
+            "(승인 시 내장 샘플 도면으로 진행됩니다.)"
+          );
+          if (runDemo) {
+            logToConsole('AutoCAD가 없어 가상 변환기(시뮬레이션 모드)를 실행합니다.', 'warn');
+            const demoRes = await fetch('samples/sample_bracket.dxf');
+            if (demoRes.ok) {
+              text = await demoRes.text();
+              logToConsole('가상 변환 성공. 샘플 브래킷 도면 데이터를 로드했습니다.', 'success');
+            } else {
+              throw new Error('샘플 도면 파일(samples/sample_bracket.dxf)을 로드할 수 없습니다.');
+            }
+          } else {
+            throw new Error('AutoCAD 미설치로 인해 DWG 도면 변환 작업이 취소되었습니다.');
+          }
+        } else {
+          const errMsg = await response.text();
+          throw new Error(errMsg || 'DWG 변환 과정에서 서버 오류가 발생했습니다.');
+        }
+      } else {
+        text = await response.text();
+        logToConsole('DWG 도면 해독 성공. 뷰포트에 렌더링합니다.', 'success');
+      }
+    } else {
+      text = await file.text();
+    }
+
+    const parsed = DXFAnalyzer.parse(text);
+    App.dxf.parsed = parsed;
+
+    // 즉시 도면 화면 렌더링
+    const canvas = $('canvas-2d');
+    const wrap   = canvas.parentElement;
+
+    $('placeholder-2d').style.display = 'none';
+    canvas.style.display = 'block';
+
+    const toolbar = $('toolbar-2d');
+    if (toolbar) toolbar.style.display = 'flex';
+
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (w > 0 && h > 0) {
+      canvas.width  = w;
+      canvas.height = h;
+    } else {
+      canvas.width  = 800;
+      canvas.height = 600;
+    }
+
+    DXFAnalyzer.initCanvas(canvas, parsed);
+    initCanvasInteraction(canvas);
+    
+    hideLoading();
+    setStatus('ready', '도면 로드 완료');
+    showToast('도면이 화면에 성공적으로 렌더링되었습니다.', 'ok');
+  } catch (err) {
+    hideLoading();
+    setStatus('error', '오류');
+    showToast(err.message, 'error');
+    logToConsole(`2D 도면 로드/렌더링 실패: ${err.message}`, 'error');
+  }
 }
 
 $('btn-analyze-2d').addEventListener('click', run2DAnalysis);
 
 async function run2DAnalysis() {
-  if (!App.dxf.file) return;
-  showLoading('DXF 파싱 중...');
-  setStatus('busy', '분석 중');
+  if (!App.dxf.parsed) {
+    showToast('먼저 2D 도면 파일을 업로드해 주세요.', 'error');
+    return;
+  }
+  showLoading('도면 설계 정밀 검증 규칙 실행 중...');
+  setStatus('busy', '설계 검증 중');
+  logToConsole('2D 설계 규칙 무결성 검증을 준비 중...', 'system');
 
   await fakeProgress([
-    [20, 400, 'DXF 엔티티 추출 중...'],
-    [50, 500, '레이어 검증 중...'],
-    [75, 400, '제도 규칙 검사 중...'],
-    [90, 300, '결과 생성 중...'],
+    [30, 200, '레이어 무결성 분석 중...'],
+    [65, 200, '제도 공차 및 마킹 패턴 분석 중...'],
+    [90, 150, '품질 평가 종합 점수 연산 중...'],
   ]);
 
   try {
-    const text = await App.dxf.file.text();
-    const parsed = DXFAnalyzer.parse(text);
-    App.dxf.parsed = parsed;
-
+    const parsed = App.dxf.parsed;
     const result = DXFAnalyzer.analyze(parsed);
     App.dxf.result = result;
 
-    // Init canvas
-    const canvas = $('canvas-2d');
-    const wrap   = $('viewer-2d-wrap');
-    canvas.width  = wrap.clientWidth  || 800;
-    canvas.height = wrap.clientHeight || 600;
-
-    $('placeholder-2d').style.display = 'none';
-    canvas.style.display = 'block';
-    $('toolbar-2d').style.display = 'flex';
-
-    DXFAnalyzer.initCanvas(canvas, parsed);
-    initCanvasInteraction(canvas);
+    // Populate layers in Model Tree
+    const layerBox = $('dxf-layer-tree-nodes');
+    if (layerBox && parsed.layers) {
+      layerBox.innerHTML = '';
+      if (Array.isArray(parsed.layers)) {
+        parsed.layers.forEach(layerName => {
+          const li = document.createElement('li');
+          li.className = 'tree-leaf';
+          const objCount = parsed.entities.filter(e => e.layer === layerName).length;
+          li.innerHTML = `<div class="tree-node"><span class="tree-icon">📄</span> <span>Layer: ${layerName} (${objCount} objs)</span></div>`;
+          layerBox.appendChild(li);
+        });
+      } else {
+        Object.keys(parsed.layers).forEach(layerName => {
+          const li = document.createElement('li');
+          li.className = 'tree-leaf';
+          li.innerHTML = `<div class="tree-node"><span class="tree-icon">📄</span> <span>Layer: ${layerName} (${parsed.layers[layerName].length} objs)</span></div>`;
+          layerBox.appendChild(li);
+        });
+      }
+    }
 
     // Show results
     $('results-2d').style.display = 'flex';
@@ -139,14 +380,16 @@ async function run2DAnalysis() {
     renderIssues('issues-list-2d', result.issues);
 
     setProgress(100);
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 100));
     hideLoading();
     setStatus('ready', '분석 완료');
     showToast(`분석 완료 — 점수: ${result.score}/100`, result.score >= 80 ? 'ok' : result.score >= 60 ? 'warn' : 'error');
+    logToConsole(`2D 도면 검증 해석 완료. 점수: ${result.score}/100, 엔티티: ${result.entityCount || parsed.entities.length}개`, 'success');
   } catch (err) {
     hideLoading();
     setStatus('error', '오류');
     showToast('DXF 파싱 오류: ' + err.message, 'error');
+    logToConsole(`[에러] DXF 분석 중 문제 발생: ${err.message}`, 'error');
     console.error(err);
   }
 }
@@ -181,18 +424,69 @@ $('btn-zout-2d').addEventListener('click', () => {
 /* ══════════════════════════════════════
    3D MODULE
 ══════════════════════════════════════ */
-const zone3d  = $('upload-zone-3d');
 const input3d = $('file-input-3d');
 
-zone3d.addEventListener('click', () => input3d.click());
-zone3d.addEventListener('dragover',  e => { e.preventDefault(); zone3d.classList.add('drag-over'); });
-zone3d.addEventListener('dragleave', () => zone3d.classList.remove('drag-over'));
-zone3d.addEventListener('drop', e => {
-  e.preventDefault();
-  zone3d.classList.remove('drag-over');
-  const f = e.dataTransfer.files[0];
-  if (f) handle3DFile(f);
+// Allow dragging 3D files over 3D viewport
+window.addEventListener('DOMContentLoaded', () => {
+  const viewport3d = document.querySelector('#content-3d .cad-viewport-panel');
+  if (viewport3d) {
+    viewport3d.addEventListener('dragover',  e => { e.preventDefault(); viewport3d.classList.add('drag-over'); });
+    viewport3d.addEventListener('dragleave', () => viewport3d.classList.remove('drag-over'));
+    viewport3d.addEventListener('drop', e => {
+      e.preventDefault();
+      viewport3d.classList.remove('drag-over');
+      const f = e.dataTransfer.files[0];
+      if (f) handle3DFile(f);
+    });
+  }
+
+  // Model tree checkbox bindings (Creo-style double binding)
+  const treeChkSolid = $('tree-chk-solid');
+  if (treeChkSolid) {
+    treeChkSolid.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        $('btn-solid').click();
+      } else {
+        $('btn-wireframe').click();
+      }
+    });
+  }
+  const treeChkDraft = $('tree-chk-draft');
+  if (treeChkDraft) {
+    treeChkDraft.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        $('btn-draft-overlay').click();
+      } else {
+        STLAnalyzer.toggleOverlay(false);
+      }
+    });
+  }
+  const treeChkParting = $('tree-chk-parting');
+  if (treeChkParting) {
+    treeChkParting.addEventListener('change', (e) => {
+      App.stl.showParting = e.target.checked;
+      const sliderVal = parseInt($('parting-slider').value);
+      STLAnalyzer.updatePartingLine(App.stl.showParting, sliderVal);
+      const btn = $('btn-parting-overlay');
+      if (btn) btn.classList.toggle('active', App.stl.showParting);
+      if (App.stl.showParting) {
+        $('parting-controls').style.display = 'flex';
+      } else {
+        $('parting-controls').style.display = 'none';
+      }
+    });
+  }
+  const treeChkCores = $('tree-chk-cores');
+  if (treeChkCores) {
+    treeChkCores.addEventListener('change', (e) => {
+      App.stl.showCores = e.target.checked;
+      STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+      const btn = $('btn-core-overlay');
+      if (btn) btn.classList.toggle('active', App.stl.showCores);
+    });
+  }
 });
+
 input3d.addEventListener('change', () => { if (input3d.files[0]) handle3DFile(input3d.files[0]); });
 
 function handle3DFile(file) {
@@ -200,13 +494,22 @@ function handle3DFile(file) {
   if (!ext.endsWith('.stl') && !ext.endsWith('.stp') && !ext.endsWith('.step')) {
     showToast('STL 또는 STP/STEP 파일만 지원됩니다.', 'error'); return;
   }
+  App.dxf.file = null;
   App.stl.file = file;
-  $('file-info-3d').style.display = 'flex';
-  $('file-info-3d').innerHTML = `📄 <span>${file.name}</span>&nbsp;(${(file.size/1024).toFixed(1)} KB)`;
-  $('material-section').style.display = 'flex';
-  $('axis-section').style.display = 'flex';
-  $('btn-analyze-3d').style.display = 'flex';
+
+  $('file-info-3d').style.display = 'block';
+  $('file-info-3d').innerHTML = `📄 ${file.name}`;
+  
+  // Show sidebar config section for 3D
+  const configs3D = $('sidebar-configs-3d');
+  if (configs3D) configs3D.style.display = 'block';
+
+  // Show Left Model Tree Part node
+  $('tree-node-part').style.display = 'block';
+  $('tree-part-name').textContent = file.name;
+
   showToast('3D 파일이 로드되었습니다.', 'ok');
+  logToConsole(`3D 제품 모델 파일 로드 완료: ${file.name} (${(file.size/1024).toFixed(1)} KB)`, 'info');
 }
 
 // Material selection
@@ -215,31 +518,26 @@ document.querySelectorAll('.mat-btn').forEach(btn => {
     document.querySelectorAll('.mat-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     App.stl.material = btn.dataset.mat;
+    $('tree-material-name').textContent = `소재: ${btn.dataset.mat}`;
+    logToConsole(`사출 수지 변경: ${btn.dataset.mat}`, 'info');
     if (App.stl.parsed) {
       reRun3DAnalysis();
     }
   });
 });
 
-  const btnFlipAxis = $('btn-flip-axis');
-  if (btnFlipAxis) {
-    btnFlipAxis.addEventListener('click', function() {
-      App.stl.flipAxis = !App.stl.flipAxis;
-      if (App.stl.flipAxis) {
-        this.classList.add('active');
-        this.style.backgroundColor = 'var(--primary-color)';
-        this.style.color = '#121214';
-      } else {
-        this.classList.remove('active');
-        this.style.backgroundColor = 'transparent';
-        this.style.color = 'var(--primary-color)';
-      }
-      STLAnalyzer.setFlipAxis(App.stl.flipAxis);
-      if (App.stl.parsed) {
-        reRun3DAnalysis();
-      }
-    });
-  }
+const btnFlipAxis = $('btn-flip-axis');
+if (btnFlipAxis) {
+  btnFlipAxis.addEventListener('click', function() {
+    App.stl.flipAxis = !App.stl.flipAxis;
+    this.classList.toggle('active', App.stl.flipAxis);
+    logToConsole(`탈형 정렬축 180도 반전: ${App.stl.flipAxis ? 'ON' : 'OFF'}`, 'info');
+    STLAnalyzer.setFlipAxis(App.stl.flipAxis);
+    if (App.stl.parsed) {
+      reRun3DAnalysis();
+    }
+  });
+}
 
 // Axis selection
 document.querySelectorAll('.axis-btn').forEach(btn => {
@@ -247,25 +545,40 @@ document.querySelectorAll('.axis-btn').forEach(btn => {
     document.querySelectorAll('.axis-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     App.stl.pullAxis = btn.dataset.axis;
+    logToConsole(`주 사출 축(Pull Axis) 변경: ${btn.dataset.axis}축`, 'info');
     if (App.stl.parsed) {
       reRun3DAnalysis();
     }
   });
 });
 
+const chkAutoRotate = $('chk-auto-rotate');
+if (chkAutoRotate) {
+  chkAutoRotate.addEventListener('change', () => {
+    logToConsole(`축 정렬 시 모델 자동 회전 설정 변경: ${chkAutoRotate.checked ? '활성화' : '비활성화'}`, 'info');
+    if (App.stl.parsed) {
+      reRun3DAnalysis();
+    }
+  });
+}
+
 async function reRun3DAnalysis() {
   if (!App.stl.parsed) return;
   setStatus('busy', '3D 재분석 중');
+  logToConsole(`[재해석] 설정값 변경에 따른 3D 형상 분석 재수행 중... (${App.stl.material}, ${App.stl.pullAxis}축)`, 'system');
   
   STLAnalyzer.clearGate();
   $('gate-info-3d').style.display = 'none';
   $('flow-controls').style.display = 'none';
   $('legend-draft').style.display = 'flex';
   $('legend-flow').style.display = 'none';
+  $('legend-shrinkage').style.display = 'none';
   $('btn-draft-overlay').classList.add('active');
   $('btn-flow-overlay').classList.remove('active');
+  $('btn-shrink-overlay').classList.remove('active');
   $('btn-set-gate').classList.remove('active');
   STLAnalyzer.setGateSettingMode(false);
+  STLAnalyzer.toggleShrinkageOverlay(false);
   resetFlowAnimation();
   App.stl.baseIssues = null;
 
@@ -292,6 +605,7 @@ async function reRun3DAnalysis() {
   STLAnalyzer.updatePartingLine(App.stl.showParting, parseInt($('parting-slider').value));
   setStatus('ready', '3D 분석 완료');
   showToast(`탈형 축/소재 재분석 완료`, 'ok');
+  logToConsole(`3D 모델 재분석 완료. 새로운 양산성 점수: ${result.score}/100`, 'success');
 }
 
 $('btn-analyze-3d').addEventListener('click', run3DAnalysis);
@@ -299,8 +613,9 @@ $('btn-analyze-3d').addEventListener('click', run3DAnalysis);
 async function run3DAnalysis() {
   if (!App.stl.file) return;
   const isSTP = App.stl.file.name.toLowerCase().endsWith('.stp') || App.stl.file.name.toLowerCase().endsWith('.step');
-  showLoading(isSTP ? 'STP 파일 로드 중...' : 'STL 파일 로드 중...');
+  showLoading(isSTP ? 'STP 파일 분석 중...' : 'STL 파일 분석 중...');
   setStatus('busy', '3D 분석 중');
+  logToConsole(`3D 모델 기하학적 및 물리적 사출성형성 해석 해석을 시작합니다... (소재: ${App.stl.material})`, 'system');
 
   await fakeProgress([
     [15, 300, isSTP ? 'STP 메시 구조 해석 중...' : 'STL 메시 파싱 중...'],
@@ -333,9 +648,16 @@ async function run3DAnalysis() {
     }
 
     $('placeholder-3d').style.display = 'none';
-    $('toolbar-3d').style.display = 'flex';
 
-    // Reset gate/flow UI states
+    // Show viewport toolbar
+    const tb3D = $('toolbar-3d');
+    if (tb3D) tb3D.style.display = 'flex';
+
+    // Show molding info in left Model Tree
+    $('tree-node-molding').style.display = 'block';
+    $('tree-material-name').textContent = `소재: ${App.stl.material}`;
+
+    // Reset gate/flow/shrinkage UI states
     $('gate-info-3d').style.display = 'none';
     $('flow-controls').style.display = 'none';
     $('parting-controls').style.display = 'none';
@@ -343,10 +665,20 @@ async function run3DAnalysis() {
     $('parting-val-display').textContent = '50%';
     $('legend-draft').style.display = 'flex';
     $('legend-flow').style.display = 'none';
+    $('legend-shrinkage').style.display = 'none';
+    
     document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
     $('btn-draft-overlay').classList.add('active');
     $('btn-solid').classList.add('active');
+    
+    // Sync model tree checkboxes
+    const chkSolid = $('tree-chk-solid'); if (chkSolid) chkSolid.checked = true;
+    const chkDraft = $('tree-chk-draft'); if (chkDraft) chkDraft.checked = true;
+    const chkParting = $('tree-chk-parting'); if (chkParting) chkParting.checked = false;
+    const chkCores = $('tree-chk-cores'); if (chkCores) chkCores.checked = false;
+
     STLAnalyzer.setGateSettingMode(false);
+    STLAnalyzer.toggleShrinkageOverlay(false);
     resetFlowAnimation();
     App.stl.baseIssues = null;
 
@@ -371,20 +703,26 @@ async function run3DAnalysis() {
     renderMoldFeatures(result.moldFeatures);
     renderIssues('issues-list-3d', result.issues);
 
+    // Update tree gate text
+    $('tree-gate-status').textContent = `주입구 (Gates): ${STLAnalyzer.getGatePositions().length}개`;
+
     setProgress(100);
     await new Promise(r => setTimeout(r, 200));
     hideLoading();
     setStatus('ready', '3D 분석 완료');
     showToast(`사출성형 분석 완료 — 양산성 점수: ${result.score}/100`, result.score >= 80 ? 'ok' : result.score >= 60 ? 'warn' : 'error');
+    logToConsole(`3D 제품 모델 분석 완료. 종합 양산성 점수: ${result.score}/100`, 'success');
+    logToConsole(`검출된 피처 - 언더컷 슬라이드 코어: ${result.moldFeatures.slides.length}개, 리프터 코어: ${result.moldFeatures.lifters.length}개`, 'info');
   } catch (err) {
     hideLoading();
     setStatus('error', '오류');
     showToast((isSTP ? 'STP' : 'STL') + ' 분석 오류: ' + err.message, 'error');
+    logToConsole(`[에러] 3D 제품 분석 실패: ${err.message}`, 'error');
     console.error(err);
   }
 }
 
-// Toolbar buttons
+// Display styling (Solid / Wireframe)
 let _wireframe = false;
 let _overlay = true;
 
@@ -393,38 +731,85 @@ $('btn-wireframe').addEventListener('click', () => {
   STLAnalyzer.setWireframe(true);
   $('btn-wireframe').classList.add('active');
   $('btn-solid').classList.remove('active');
+  const chk = $('tree-chk-solid'); if (chk) chk.checked = false;
+  logToConsole('디스플레이 모드 변경: 와이어프레임(Wireframe)', 'info');
 });
 $('btn-solid').addEventListener('click', () => {
   _wireframe = false;
   STLAnalyzer.setWireframe(false);
   $('btn-solid').classList.add('active');
   $('btn-wireframe').classList.remove('active');
+  const chk = $('tree-chk-solid'); if (chk) chk.checked = true;
+  logToConsole('디스플레이 모드 변경: 솔리드 쉐이딩(Solid Shading)', 'info');
 });
+
+// Overlays (Draft, Flow, Shrinkage)
 $('btn-draft-overlay').addEventListener('click', function() {
   document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
   this.classList.add('active');
   STLAnalyzer.toggleFlowOverlay(false);
+  STLAnalyzer.toggleShrinkageOverlay(false);
   STLAnalyzer.toggleOverlay(true);
+  const chk = $('tree-chk-draft'); if (chk) chk.checked = true;
+
   $('legend-draft').style.display = 'flex';
   $('legend-flow').style.display = 'none';
+  $('legend-shrinkage').style.display = 'none';
   $('flow-controls').style.display = 'none';
+  logToConsole('해석 오버레이 변경: 구배각 검사(Draft Angle)', 'info');
 });
 
 $('btn-flow-overlay').addEventListener('click', function() {
   if (!STLAnalyzer.getGatePosition()) {
     showToast('게이트 위치를 먼저 지정해야 유동 분석이 가능합니다.', 'warn');
-    // auto switch to gate setting mode
     $('btn-set-gate').click();
     return;
   }
   document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
   this.classList.add('active');
   STLAnalyzer.toggleFlowOverlay(true);
+  const chk = $('tree-chk-draft'); if (chk) chk.checked = false;
+
   $('legend-draft').style.display = 'none';
   $('legend-flow').style.display = 'flex';
+  $('legend-shrinkage').style.display = 'none';
   $('flow-controls').style.display = 'flex';
+  logToConsole('해석 오버레이 변경: 사출 유동 시뮬레이션(Moldflow)', 'info');
 });
 
+$('btn-shrink-overlay').addEventListener('click', function() {
+  if (!App.stl.parsed) {
+    showToast('3D 모델을 먼저 분석하세요.', 'warn');
+    return;
+  }
+  const isActive = this.classList.contains('active');
+  document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+
+  if (!isActive) {
+    this.classList.add('active');
+    showToast('수축 위험 예측 계산 중...', 'info');
+    STLAnalyzer.toggleShrinkageOverlay(true);
+    const chk = $('tree-chk-draft'); if (chk) chk.checked = false;
+
+    $('legend-draft').style.display = 'none';
+    $('legend-flow').style.display = 'none';
+    $('legend-shrinkage').style.display = 'flex';
+    $('flow-controls').style.display = 'none';
+    showToast(`${App.stl.material} 수축 위험 예측 활성화`, 'ok');
+    logToConsole(`해석 오버레이 변경: ${App.stl.material} 수축 예측(Shrinkage)`, 'info');
+  } else {
+    $('btn-draft-overlay').classList.add('active');
+    STLAnalyzer.toggleShrinkageOverlay(false);
+    STLAnalyzer.toggleOverlay(true);
+    const chk = $('tree-chk-draft'); if (chk) chk.checked = true;
+
+    $('legend-draft').style.display = 'flex';
+    $('legend-flow').style.display = 'none';
+    $('legend-shrinkage').style.display = 'none';
+  }
+});
+
+// Set Gate
 $('btn-set-gate').addEventListener('click', function() {
   const isSetting = !STLAnalyzer.isGateSettingMode();
   STLAnalyzer.setGateSettingMode(isSetting);
@@ -432,10 +817,12 @@ $('btn-set-gate').addEventListener('click', function() {
   if (isSetting) {
     showToast('모델 표면을 클릭하여 주입구(Gate)를 지정하세요.', 'info');
     $('gate-info-3d').style.display = 'flex';
+    logToConsole('게이트 지정 모드 활성화. 모델 표면을 선택해 주십시오.', 'info');
   } else {
     if (!STLAnalyzer.getGatePosition()) {
       $('gate-info-3d').style.display = 'none';
     }
+    logToConsole('게이트 지정 모드 비활성화.', 'info');
   }
 });
 
@@ -504,34 +891,40 @@ function handleViewerClick(e) {
   if (!result) return;
 
   if (result.action === 'remove_gate') {
-    if (result.gateCount === 0) {
-      // 게이트 전부 제거 → 드래프트 뷰로 복귀
+    const count = result.gateCount;
+    $('tree-gate-status').textContent = `주입구 (Gates): ${count}개`;
+    if (count === 0) {
       $('gate-info-3d').style.display = 'none';
       $('flow-controls').style.display = 'none';
       reRun3DAnalysis();
       showToast('모든 게이트가 제거되었습니다.', 'info');
+      logToConsole('모든 게이트 주입구가 제거되었습니다.', 'warning');
     } else {
-      // 남은 게이트로 유동 재계산
       const flowRes = STLAnalyzer.recalculateFlow();
       if (flowRes) {
         updateGateInfoPanel(flowRes);
         updateAnalysisIssuesWithGate(flowRes);
       }
-      showToast(`게이트 제거 (남은 게이트: ${result.gateCount}개)`, 'info');
+      showToast(`게이트 제거 (남은 게이트: ${count}개)`, 'info');
+      logToConsole(`게이트 제거 완료. 남은 개수: ${count}개`, 'info');
       resetFlowAnimation();
       startFlowAnimation();
     }
     return;
   }
 
-  // action === 'add_gate'
-  showToast(`게이트 G${result.gateIndex + 1} 설정 완료 (총 ${result.gateCount}개)`, 'ok');
+  const count = result.gateCount;
+  $('tree-gate-status').textContent = `주입구 (Gates): ${count}개`;
+  showToast(`게이트 G${result.gateIndex + 1} 설정 완료 (총 ${count}개)`, 'ok');
+  logToConsole(`새로운 사출 게이트 G${result.gateIndex + 1} 추가 완료.`, 'success');
   updateGateInfoPanel(result);
   updateAnalysisIssuesWithGate(result);
 
   STLAnalyzer.toggleFlowOverlay(true);
   document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
   $('btn-flow-overlay').classList.add('active');
+  const chk = $('tree-chk-draft'); if (chk) chk.checked = false;
+
   $('legend-draft').style.display = 'none';
   $('legend-flow').style.display = 'flex';
   $('flow-controls').style.display = 'flex';
@@ -559,7 +952,7 @@ function updateAnalysisIssuesWithGate(gateResult) {
   
   const issues = [...App.stl.baseIssues];
   const matKey = App.stl.material;
-  const mat = { ABS: 120, PC: 95, PP: 180, POM: 140 }[matKey] || 120;
+  const mat = { ABS: 120, PC: 95, PP: 180, POM: 140, FORTRON: 125 }[matKey] || 120;
   const maxDist = gateResult.maxFlowDistance;
   
   if (maxDist > mat) {
@@ -568,6 +961,7 @@ function updateAnalysisIssuesWithGate(gateResult) {
       title: '미성형 (Short Shot) 위험 매우 높음',
       desc: `게이트 기준 최장 유동 거리(${maxDist.toFixed(1)}mm)가 현재 소재(${matKey}) 유동 한계(${mat}mm)를 초과합니다. 주입구를 중앙으로 옮기거나 추가 설정이 필요합니다.`
     });
+    logToConsole(`[주의] 유동거리(${maxDist.toFixed(1)}mm)가 소재 한계(${mat}mm)를 초과하여 미성형 위험이 큽니다.`, 'error');
   } else if (maxDist > mat * 0.8) {
     issues.unshift({
       level: 'warning',
@@ -586,17 +980,17 @@ function updateAnalysisIssuesWithGate(gateResult) {
   if (airTraps.length > 0) {
     issues.push({
       level: 'warning',
-      title: `에어 트랩 위험 구간 ${airTraps.length}곳 감지`,
-      desc: `충진이 마지막에 끝나는 지점(핑크색 구체 표시) 근처에 가스 배출구(Gas Vent) 배치를 권장합니다.`
+      title: `⚠ 에어 트랩 위험 ${airTraps.length}곳 감지 (자홍색 마커)`,
+      desc: `충진 말기 포켓 구간에 가스가 갇힐 위험이 있습니다. 해당 위치에 가스 배출구(Gas Vent) 또는 게이트 위치 조정을 권장합니다.`
     });
   }
-  
+
   const weldLines = gateResult.defects.filter(d => d.type === 'weld_line');
   if (weldLines.length > 0) {
     issues.push({
-      level: 'info',
-      title: `웰드라인 발생 구간 예측`,
-      desc: `수지 합류부(노란색 구체 표시)에 웰드라인 흔적이 생길 수 있어 강도 설계 검토를 권장합니다.`
+      level: 'warning',
+      title: `⚠ 웰드라인 합류 구간 예측 (노란색 마커)`,
+      desc: `다중 게이트에서 유동이 만나는 지점에 웰드라인이 형성됩니다. 강도 저하 우려 지점으로 설계 검토를 권장합니다.`
     });
   }
   
@@ -610,9 +1004,28 @@ function updateAnalysisIssuesWithGate(gateResult) {
 }
 
 $('btn-core-overlay').addEventListener('click', function() {
+  if (!App.stl.parsed) {
+    showToast('3D 모델을 먼저 분석하세요.', 'warn');
+    return;
+  }
   App.stl.showCores = !App.stl.showCores;
-  STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+  try {
+    STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+  } catch (err) {
+    console.error('Core helper error:', err);
+    logToConsole(`[에러] 코어 가이드 표시 중 오류: ${err.message}`, 'error');
+    showToast('코어 가이드 표시 오류: ' + err.message, 'error');
+    App.stl.showCores = false;
+    return;
+  }
   this.classList.toggle('active', App.stl.showCores);
+  const chk = $('tree-chk-cores'); if (chk) chk.checked = App.stl.showCores;
+  if (App.stl.showCores) {
+    showToast('금형 코어 가이드 표시 활성화', 'ok');
+    logToConsole('금형 언더컷 코어 가이드 표시: ON', 'info');
+  } else {
+    logToConsole('금형 언더컷 코어 가이드 표시: OFF', 'info');
+  }
 });
 $('btn-parting-overlay').addEventListener('click', function() {
   App.stl.showParting = !App.stl.showParting;
@@ -843,3 +1256,72 @@ function renderMoldFeatures(features) {
     container.appendChild(div);
   });
 }
+
+// ══════════════════════════════════════
+// DRAGGABLE RESIZER FOR SIDEBAR PANELS
+// ══════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+  initResizers();
+});
+
+function initResizers() {
+  document.querySelectorAll('.workspace-layout').forEach(layout => {
+    const leftPanel = layout.querySelector('.cad-model-tree-panel');
+    const rightPanel = layout.querySelector('.cad-properties-panel');
+    const resizerLeft = layout.querySelector('.resizer-left');
+    const resizerRight = layout.querySelector('.resizer-right');
+
+    if (resizerLeft && leftPanel) {
+      setupResizer(resizerLeft, leftPanel, 'left');
+    }
+    if (resizerRight && rightPanel) {
+      setupResizer(resizerRight, rightPanel, 'right');
+    }
+  });
+}
+
+function setupResizer(resizer, panel, direction) {
+  let startX, startWidth;
+
+  resizer.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = panel.getBoundingClientRect().width;
+    resizer.classList.add('dragging');
+
+    document.addEventListener('mousemove', doDrag);
+    document.addEventListener('mouseup', stopDrag);
+  });
+
+  function doDrag(e) {
+    let newWidth;
+    if (direction === 'left') {
+      newWidth = startWidth + (e.clientX - startX);
+      newWidth = Math.max(160, Math.min(newWidth, 480));
+    } else {
+      newWidth = startWidth - (e.clientX - startX);
+      newWidth = Math.max(160, Math.min(newWidth, 480));
+    }
+    panel.style.width = newWidth + 'px';
+    panel.style.minWidth = newWidth + 'px';
+
+    window.dispatchEvent(new Event('resize'));
+  }
+
+  function stopDrag() {
+    resizer.classList.remove('dragging');
+    document.removeEventListener('mousemove', doDrag);
+    document.removeEventListener('mouseup', stopDrag);
+  }
+}
+
+// 2D Canvas resize listener
+window.addEventListener('resize', () => {
+  const canvas = $('canvas-2d');
+  if (canvas && canvas.style.display !== 'none' && App.dxf.parsed) {
+    const wrap = canvas.parentElement;
+    canvas.width = wrap.clientWidth;
+    canvas.height = wrap.clientHeight;
+    DXFAnalyzer.initCanvas(canvas, App.dxf.parsed);
+  }
+});

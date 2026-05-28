@@ -33,8 +33,8 @@
   --text-secondary: #7a8fb0;
   --text-muted:     #3d5278;
 
-  --panel-w: 310px;
-  --header-h: 60px;
+  --panel-w: 280px;
+  --header-h: 52px;
   --radius-lg: 16px;
   --radius-md: 10px;
   --radius-sm: 6px;
@@ -45,7 +45,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 body {
-  font-family: 'Outfit', sans-serif;
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Malgun Gothic", "Noto Sans KR", sans-serif;
   background: var(--bg-base);
   color: var(--text-primary);
   overflow: hidden;
@@ -63,7 +63,7 @@ body {
 #app-header {
   position: fixed; top: 0; left: 0; right: 0; z-index: 100;
   height: var(--header-h);
-  display: flex; align-items: center; gap: 1.5rem; padding: 0 1.5rem;
+  display: flex; align-items: center; gap: 1rem; padding: 0 1.2rem;
   background: rgba(8,12,24,0.88);
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border-dim);
@@ -72,17 +72,18 @@ body {
 .header-logo { display: flex; align-items: center; gap: 10px; min-width: 180px; }
 .logo-hex { width: 36px; height: 36px; filter: drop-shadow(0 0 8px var(--cyan)); }
 .logo-text-wrap { display: flex; flex-direction: column; line-height: 1; }
-.logo-main { font-size: 1.15rem; font-weight: 800; letter-spacing: 2px; color: var(--cyan); }
-.logo-sub  { font-size: 0.58rem; font-weight: 400; color: var(--text-secondary); letter-spacing: 1px; text-transform: uppercase; margin-top: 2px; }
+.logo-main { font-size: 1rem; font-weight: 800; letter-spacing: 2px; color: var(--cyan); }
+.logo-sub  { font-size: 0.52rem; font-weight: 400; color: var(--text-secondary); letter-spacing: 1px; text-transform: uppercase; margin-top: 1px; }
 
 /* Nav tabs */
 .header-nav { display: flex; gap: 4px; background: var(--bg-glass); border: 1px solid var(--border-dim); border-radius: 99px; padding: 4px; }
 .nav-tab {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 18px; border-radius: 99px; border: none; cursor: pointer;
-  font-family: 'Outfit', sans-serif; font-size: 0.82rem; font-weight: 500;
+  font-family: inherit; font-size: 0.82rem; font-weight: 500;
   color: var(--text-secondary); background: transparent;
   transition: var(--transition);
+  white-space: nowrap;
 }
 .nav-tab:hover  { color: var(--text-primary); background: var(--bg-glass); }
 .nav-tab.active { color: var(--bg-base); background: var(--cyan); box-shadow: var(--cyan-glow); }
@@ -164,8 +165,9 @@ body {
 .btn {
   display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 10px 20px; border-radius: var(--radius-md); border: none;
-  font-family: 'Outfit', sans-serif; font-size: 0.85rem; font-weight: 600;
+  font-family: inherit; font-size: 0.82rem; font-weight: 600;
   cursor: pointer; width: 100%; transition: var(--transition);
+  white-space: nowrap;
 }
 .btn-primary {
   background: linear-gradient(135deg, var(--cyan), #0099cc);
@@ -182,15 +184,30 @@ body {
 /* ═══════════ MATERIAL GRID ═══════════ */
 .material-section { display: flex; flex-direction: column; gap: 8px; }
 .section-label { font-size: 0.72rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; }
-.material-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); gap: 6px; }
-.mat-btn, .axis-btn {
-  background: var(--bg-glass); border: 1px solid var(--border-dim);
-  border-radius: var(--radius-sm); padding: 10px 6px; cursor: pointer;
-  font-family: 'Outfit', sans-serif; font-size: 0.82rem; font-weight: 600;
-  color: var(--text-secondary); text-align: center; line-height: 1.4;
-  transition: var(--transition);
+.material-grid { display: grid; gap: 6px; }
+.material-grid.materials {
+  grid-template-columns: repeat(5, 1fr);
 }
-.mat-btn small { font-size: 0.65rem; color: var(--text-muted); font-weight: 400; }
+.material-grid.axes {
+  grid-template-columns: repeat(3, 1fr);
+}
+.mat-btn {
+  background: var(--bg-glass); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm); padding: 6px 2px; cursor: pointer;
+  font-family: inherit; font-size: 0.72rem; font-weight: 600;
+  color: var(--text-secondary); text-align: center; line-height: 1.3;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.mat-btn small { font-size: 0.58rem; color: var(--text-muted); font-weight: 400; display: block; }
+.axis-btn {
+  background: var(--bg-glass); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm); padding: 8px 4px; cursor: pointer;
+  font-family: inherit; font-size: 0.76rem; font-weight: 600;
+  color: var(--text-secondary); text-align: center; line-height: 1.3;
+  transition: var(--transition);
+  white-space: nowrap;
+}
 .mat-btn:hover, .axis-btn:hover { border-color: var(--cyan); color: var(--cyan); }
 .mat-btn.active, .axis-btn.active { border-color: var(--cyan); background: var(--cyan-dim); color: var(--cyan); }
 
@@ -308,14 +325,33 @@ body {
   background: rgba(8,12,24,0.85); border: 1px solid var(--border-dim);
   border-radius: var(--radius-md); padding: 6px; backdrop-filter: blur(10px);
 }
+.horizontal-viewer-toolbar {
+  flex-direction: row;
+  align-items: center;
+  padding: 6px 10px;
+  gap: 6px;
+}
 .tool-btn {
   width: 34px; height: 34px; border-radius: var(--radius-sm); border: none;
   background: transparent; color: var(--text-secondary); font-size: 1rem;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   transition: var(--transition);
+  white-space: nowrap;
+}
+.horizontal-viewer-toolbar .tool-btn {
+  width: auto;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 0.78rem;
+  font-family: inherit;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .tool-btn:hover, .tool-btn.active { background: var(--cyan-dim); color: var(--cyan); }
 .tool-sep { height: 1px; background: var(--border-dim); margin: 2px 0; }
+.tool-sep-v { width: 1px; height: 18px; background: var(--border-dim); margin: 0 4px; }
 
 /* ═══════════ REPORT ═══════════ */
 .report-wrap {
@@ -453,6 +489,8 @@ body {
 
 /* Legend Colors */
 .leg-dot.orange { background: #ff8800; }
+.leg-dot.blue   { background: #0033ff; }
+.leg-dot.cyan   { background: #00ccff; }
 
 /* ═══════════════════════════════════════════
    PRINT STYLES (PDF EXPORT)
@@ -513,3 +551,535 @@ body {
     color: #080c18 !important;
   }
 }
+
+/* ═══════════════════════════════════════════
+   CREO CAD STYLE WORKSPACE EXTENSION
+   ═══════════════════════════════════════════ */
+
+:root {
+  --creo-bg-dark:    #161922;
+  --creo-bg-panel:   #1f2430;
+  --creo-bg-ribbon:  #1a1e28;
+  --creo-border-cad: #2a3142;
+  --creo-active:     #00d4ff;
+  --creo-active-bg:  rgba(0, 212, 255, 0.12);
+  --header-h:        48px; /* Slim compact header */
+  --panel-w:         260px; /* Model tree width */
+  --prop-w:          290px; /* Properties panel width */
+  --console-h:       60px;  /* Bottom console height */
+}
+
+/* Override App Main placement for tall Ribbon */
+#app-main.creo-workspace {
+  top: var(--header-h);
+  bottom: 0;
+  background: #0f1118;
+}
+
+/* --- CREO Ribbon Header --- */
+.creo-ribbon-header {
+  height: var(--header-h) !important;
+  background: var(--creo-bg-ribbon) !important;
+  border-bottom: 2px solid var(--creo-border-cad) !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  padding: 0 12px !important;
+  gap: 0 !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+.creo-ribbon-header .header-logo {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  border-right: 1px solid var(--creo-border-cad);
+  padding-right: 15px;
+  margin-right: 15px;
+  min-width: 130px;
+}
+.creo-ribbon-header .logo-hex {
+  width: 28px;
+  height: 28px;
+}
+.creo-ribbon-header .logo-main {
+  font-size: 0.95rem;
+  letter-spacing: 1.5px;
+}
+.creo-ribbon-header .logo-sub {
+  font-size: 0.52rem;
+  margin-top: 1px;
+}
+
+.ribbon-tabs-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Navigation Tabs inside Ribbon */
+.ribbon-tabs {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  height: 30px;
+  display: flex !important;
+  align-items: flex-end !important;
+}
+
+.ribbon-tabs .nav-tab {
+  border-radius: 4px 4px 0 0 !important;
+  background: rgba(255,255,255,0.02) !important;
+  border: 1px solid var(--creo-border-cad) !important;
+  border-bottom: none !important;
+  color: var(--text-secondary) !important;
+  padding: 4px 16px !important;
+  font-size: 0.76rem !important;
+  height: 26px;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+  margin-right: 2px;
+}
+.ribbon-tabs .nav-tab:hover {
+  background: rgba(255,255,255,0.06) !important;
+  color: #fff !important;
+}
+.ribbon-tabs .nav-tab.active {
+  background: var(--creo-bg-panel) !important;
+  color: var(--creo-active) !important;
+  border-top: 2px solid var(--creo-active) !important;
+}
+
+/* Ribbon Panel holding command groups */
+.ribbon-panels {
+  flex: 1;
+  background: var(--creo-bg-panel);
+  border: 1px solid var(--creo-border-cad);
+  border-bottom: none;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: stretch;
+}
+.ribbon-panel {
+  display: none;
+  height: 100%;
+}
+.ribbon-panel.active {
+  display: flex;
+  align-items: stretch;
+}
+
+/* Ribbon Group (Section box with label at the bottom) */
+.ribbon-group {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--creo-border-cad);
+  padding: 4px 8px;
+  min-width: 60px;
+  justify-content: space-between;
+}
+.ribbon-group-title {
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 3px;
+  font-weight: 700;
+}
+.ribbon-group-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Ribbon Buttons */
+.ribbon-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  height: 52px;
+  min-width: 64px;
+  transition: var(--transition);
+}
+.ribbon-btn:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--creo-border-cad);
+}
+.ribbon-btn-icon {
+  font-size: 1.3rem;
+  margin-bottom: 2px;
+}
+.ribbon-btn-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.btn-primary-style {
+  background: var(--creo-active-bg) !important;
+  border: 1px solid var(--creo-active) !important;
+  color: var(--creo-active) !important;
+}
+.btn-primary-style:hover {
+  background: var(--creo-active) !important;
+  color: #000 !important;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.4);
+}
+
+.ribbon-btn-sm {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--creo-border-cad);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 600;
+  transition: var(--transition);
+}
+.ribbon-btn-sm:hover, .ribbon-btn-sm.active {
+  border-color: var(--creo-active);
+  color: var(--creo-active);
+  background: var(--creo-active-bg);
+}
+
+.ribbon-btn-tool {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--creo-border-cad);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.ribbon-btn-tool:hover {
+  border-color: var(--creo-active);
+  color: var(--creo-active);
+  background: rgba(0, 212, 255, 0.05);
+}
+.ribbon-btn-tool.active {
+  border-color: var(--creo-active);
+  background: var(--creo-active-bg);
+  color: var(--creo-active);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.2);
+}
+
+.ribbon-file-info {
+  font-size: 0.65rem;
+  color: var(--creo-active);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--creo-border-cad);
+  background: rgba(0,0,0,0.2);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* Material Selector in Ribbon */
+.ribbon-material-selector {
+  display: flex;
+  gap: 3px;
+}
+.ribbon-mat-btn {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--creo-border-cad);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  padding: 6px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: var(--transition);
+}
+.ribbon-mat-btn:hover {
+  color: var(--creo-active);
+  border-color: var(--creo-active);
+}
+.ribbon-mat-btn.active {
+  background: var(--creo-active-bg);
+  border-color: var(--creo-active);
+  color: var(--creo-active);
+}
+
+/* Axis Layout in Ribbon */
+.axis-controls-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start !important;
+  gap: 2px !important;
+}
+.axis-buttons {
+  display: flex;
+  gap: 3px;
+}
+.ribbon-axis-btn {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--creo-border-cad);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  padding: 3px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.ribbon-axis-btn.active {
+  background: var(--creo-active-bg);
+  border-color: var(--creo-active);
+  color: var(--creo-active);
+}
+.ribbon-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-top: 2px;
+}
+.ribbon-checkbox-label input {
+  accent-color: var(--creo-active);
+  width: 10px;
+  height: 10px;
+}
+
+/* Ribbon Layout Structures */
+.overlay-buttons-layout, .view-buttons-layout {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.shading-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* --- Layout of Main Workspace --- */
+.workspace-layout {
+  display: flex;
+  width: 100%;
+  height: calc(100% - var(--console-h, 60px));
+  position: absolute;
+  top: 0;
+  bottom: var(--console-h, 60px);
+  transition: height 0.25s ease, bottom 0.25s ease;
+}
+
+/* Left Model Tree Sidebar */
+.cad-model-tree-panel {
+  width: var(--panel-w);
+  min-width: var(--panel-w);
+  background: var(--creo-bg-panel);
+  border-right: 2px solid var(--creo-border-cad);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cad-model-tree-panel .panel-header, .cad-properties-panel .panel-header {
+  background: var(--creo-bg-dark);
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--creo-border-cad);
+}
+.cad-model-tree-panel .panel-header h3, .cad-properties-panel .panel-header h3 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+.model-tree-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+/* Tree Styling */
+.tree-root, .tree-root ul {
+  list-style: none;
+  padding-left: 14px;
+}
+.tree-root {
+  padding-left: 0;
+}
+.tree-node {
+  display: flex;
+  align-items: center;
+  font-size: 0.76rem;
+  color: #cdd6e4;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: default;
+  white-space: nowrap;
+}
+.hover-tree-node:hover {
+  background: rgba(255,255,255,0.05);
+}
+.tree-arrow {
+  font-size: 0.5rem;
+  color: var(--text-muted);
+  width: 12px;
+  display: inline-block;
+  cursor: pointer;
+}
+.tree-icon {
+  margin-right: 6px;
+  font-size: 0.85rem;
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+}
+.tree-leaf {
+  padding-left: 10px;
+}
+
+/* Center 3D Viewport */
+.cad-viewport-panel {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(circle at center, #1b2030 0%, #0a0c12 100%);
+  border-right: 1px solid var(--creo-border-cad);
+}
+
+/* Right Properties/Results Sidebar */
+.cad-properties-panel {
+  width: var(--prop-w);
+  min-width: var(--prop-w);
+  background: var(--creo-bg-panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.properties-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Bottom Message Console */
+.cad-message-console {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--console-h, 60px);
+  background: var(--creo-bg-dark);
+  border-top: 2px solid var(--creo-border-cad);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  transition: height 0.25s ease;
+}
+.cad-message-console.collapsed {
+  height: 24px;
+  overflow: hidden;
+}
+.cad-message-console.collapsed .console-body {
+  display: none;
+}
+.console-header {
+  height: 22px;
+  min-height: 22px;
+  background: #11141b;
+  border-bottom: 1px solid var(--creo-border-cad);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+.console-title {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.console-clear-btn {
+  font-size: 0.62rem;
+  color: var(--creo-active);
+  cursor: pointer;
+  font-weight: bold;
+}
+.console-clear-btn:hover {
+  text-decoration: underline;
+}
+.console-body {
+  flex: 1;
+  padding: 6px 12px;
+  overflow-y: auto;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.72rem;
+  background: #090b0f;
+  color: #a3b8cc;
+  line-height: 1.4;
+}
+.log-line {
+  margin-bottom: 2px;
+  white-space: pre-wrap;
+}
+.log-line.system {
+  color: #566c85;
+}
+.log-line.info {
+  color: var(--creo-active);
+}
+.log-line.warning {
+  color: var(--yellow);
+}
+.log-line.error {
+  color: var(--red);
+}
+.log-line.success {
+  color: var(--green);
+}
+
+/* ═══════════════════════════════════════════
+   DRAG RESIZER SPLITTER STYLE
+   ═══════════════════════════════════════════ */
+.cad-resizer {
+  width: 4px;
+  cursor: col-resize;
+  background: var(--creo-border-cad);
+  transition: background 0.15s, width 0.15s, box-shadow 0.15s;
+  z-index: 20;
+  position: relative;
+  align-self: stretch;
+}
+.cad-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: -4px; right: -4px;
+  cursor: col-resize;
+}
+.cad-resizer:hover, .cad-resizer.dragging {
+  background: var(--cyan);
+  width: 6px;
+  box-shadow: 0 0 10px var(--cyan);
+}
+

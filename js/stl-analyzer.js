@@ -16,6 +16,8 @@ const STLAnalyzer = (() => {
   let _partingLineObj = null;
   let _partingHeightPct = 50;
   const CONTAINER_ID = 'canvas-3d';
+  let _cameraTargetPos = null;
+  let _pullArrow = null;
 
   // Flow simulation and gate settings
   let _gatePositions = [];   // array of local-space Vector3
@@ -23,6 +25,7 @@ const STLAnalyzer = (() => {
   let _gateMarkers  = [];    // parallel array of THREE.Mesh markers
   let _defectMarkers = [];
   let _flowOverlayActive = false;
+  let _shrinkageOverlayActive = false;
   let _flowDistances = null;
   let _maxFlowDistance = 0;
   let _isGateSettingMode = false;
@@ -34,6 +37,7 @@ const STLAnalyzer = (() => {
     PC:  { shrink: 0.006, minDraft: 1.5, ribRatio: 0.55, name: 'PC (폴리카보네이트)' },
     PP:  { shrink: 0.015, minDraft: 2.0, ribRatio: 0.5,  name: 'PP (폴리프로필렌)' },
     POM: { shrink: 0.020, minDraft: 0.5, ribRatio: 0.5,  name: 'POM (아세탈)' },
+    FORTRON: { shrink: 0.005, minDraft: 1.5, ribRatio: 0.5, name: 'FORTRON (PPS 수지)' },
   };
 
   /* ──────────────────────────────────────
@@ -147,11 +151,21 @@ const STLAnalyzer = (() => {
   }
 
   function parseBinary(buffer) {
+    if (buffer.byteLength < 84) {
+      throw new Error("STL 파일의 크기가 너무 작습니다. (헤더 84바이트 미만)");
+    }
     const view = new DataView(buffer);
     const triCount = view.getUint32(80, true);
     const positions = [], normals = [];
     let offset = 84;
-    for (let i = 0; i < triCount; i++) {
+    
+    // 안전한 루프 처리를 위해 버퍼 크기 한도 체크
+    const actualCount = Math.min(triCount, Math.floor((buffer.byteLength - 84) / 50));
+    if (actualCount <= 0) {
+      throw new Error("유효한 3D 기하 데이터를 읽을 수 없습니다. 파일이 손상되었습니다.");
+    }
+
+    for (let i = 0; i < actualCount; i++) {
       const nx = view.getFloat32(offset,    true);
       const ny = view.getFloat32(offset+4,  true);
       const nz = view.getFloat32(offset+8,  true);
@@ -165,7 +179,7 @@ const STLAnalyzer = (() => {
       }
       offset += 2; // attribute
     }
-    return { positions: new Float32Array(positions), normals: new Float32Array(normals), triCount };
+    return { positions: new Float32Array(positions), normals: new Float32Array(normals), triCount: actualCount };
   }
 
   function parseASCII(text) {
@@ -175,14 +189,28 @@ const STLAnalyzer = (() => {
     let fm, vm;
     while ((fm = facetRe.exec(text)) !== null) {
       const nx = parseFloat(fm[1]), ny = parseFloat(fm[2]), nz = parseFloat(fm[3]);
+      let validFacet = true;
+      const tempPts = [];
       for (let v = 0; v < 3; v++) {
         vm = vertexRe.exec(text);
-        if (!vm) break;
-        positions.push(parseFloat(vm[1]), parseFloat(vm[2]), parseFloat(vm[3]));
-        normals.push(nx, ny, nz);
+        if (!vm) {
+          validFacet = false;
+          break;
+        }
+        tempPts.push(parseFloat(vm[1]), parseFloat(vm[2]), parseFloat(vm[3]));
+      }
+      if (validFacet) {
+        positions.push(...tempPts);
+        normals.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
+      } else {
+        break;
       }
     }
-    return { positions: new Float32Array(positions), normals: new Float32Array(normals), triCount: positions.length/9 };
+    const triCount = positions.length / 9;
+    if (triCount <= 0) {
+      throw new Error("ASCII STL 파싱 실패: 유효한 삼각형 단면을 찾을 수 없습니다.");
+    }
+    return { positions: new Float32Array(positions), normals: new Float32Array(normals), triCount };
   }
 
   /* ──────────────────────────────────────
@@ -230,6 +258,32 @@ const STLAnalyzer = (() => {
     _controls.minDistance = 1;
     _controls.maxDistance = 5000;
 
+    // Gimbal interaction
+    _renderer.domElement.addEventListener('click', (event) => {
+      if (!_gimbalWidget) return;
+      const rect = _renderer.domElement.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mouse, _camera);
+      const hits = raycaster.intersectObjects(_gimbalWidget.children, true);
+      if (hits.length > 0) {
+        let obj = hits[0].object;
+        while (obj && (!obj.name || !obj.name.startsWith('gimbal_'))) {
+          obj = obj.parent;
+        }
+        if (obj && obj.name) {
+          const axis = obj.name.split('_')[1];
+          const btn = document.querySelector(`.axis-btn[data-axis="${axis}"]`);
+          if (btn) {
+            btn.click();
+          }
+        }
+      }
+    });
+
     // Resize
     window.addEventListener('resize', () => {
       const W2 = container.clientWidth, H2 = container.clientHeight;
@@ -240,6 +294,15 @@ const STLAnalyzer = (() => {
     animate();
   }
 
+  function resizeViewer() {
+    const container = document.getElementById(CONTAINER_ID);
+    if (!container || !_renderer || !_camera) return;
+    const W2 = container.clientWidth, H2 = container.clientHeight;
+    _camera.aspect = W2/H2; _camera.updateProjectionMatrix();
+    _renderer.setSize(W2, H2);
+  }
+
+
   function animate() {
     requestAnimationFrame(animate);
     if (_mesh && _mesh.targetQuaternion) {
@@ -249,7 +312,12 @@ const STLAnalyzer = (() => {
       } else {
         _mesh.quaternion.copy(_mesh.targetQuaternion);
       }
+      if (_gimbalWidget) {
+        _gimbalWidget.quaternion.copy(_mesh.quaternion);
+      }
+      updatePullArrow();
     }
+
     _controls.update();
     _renderer.render(_scene, _camera);
   }
@@ -310,8 +378,231 @@ const STLAnalyzer = (() => {
     _gimbalWidget = createLabeledAxes(gimbalSize);
     _gimbalWidget.position.set(-size.x * 0.5 - 10, -size.y/2, size.z * 0.5 + 10);
     _scene.add(_gimbalWidget);
+    updateGimbalHighlight();
+
+    if (_pullArrow) {
+      _scene.remove(_pullArrow);
+      _pullArrow = null;
+    }
+    updatePullArrow();
 
     _scene.add(_mesh);
+  }
+
+  // 3.1 Ray-Triangle Intersection (Moller-Trumbore Algorithm)
+  function rayTriangleIntersect(orig, dir, v0, v1, v2) {
+    const EPSILON = 0.000001;
+    const edge1 = new THREE.Vector3().subVectors(v1, v0);
+    const edge2 = new THREE.Vector3().subVectors(v2, v0);
+    const h = new THREE.Vector3().crossVectors(dir, edge2);
+    const a = edge1.dot(h);
+    
+    if (a > -EPSILON && a < EPSILON) return null; // Parallel
+    
+    const f = 1.0 / a;
+    const s = new THREE.Vector3().subVectors(orig, v0);
+    const u = f * s.dot(h);
+    
+    if (u < 0.0 || u > 1.0) return null;
+    
+    const q = new THREE.Vector3().crossVectors(s, edge1);
+    const v = f * dir.dot(q);
+    
+    if (v < 0.0 || u + v > 1.0) return null;
+    
+    const t = f * edge2.dot(q);
+    if (t > EPSILON) return t;
+    return null;
+  }
+
+  // 3.2.1 주 축에 수직인 수평 방향 정의
+  function getHorizontalDirs(pullAxis) {
+    if (pullAxis === 'X') {
+      return [
+        { dir: new THREE.Vector3(0, 1, 0), name: '+Y' },
+        { dir: new THREE.Vector3(0, -1, 0), name: '-Y' },
+        { dir: new THREE.Vector3(0, 0, 1), name: '+Z' },
+        { dir: new THREE.Vector3(0, 0, -1), name: '-Z' }
+      ];
+    } else if (pullAxis === 'Y') {
+      return [
+        { dir: new THREE.Vector3(1, 0, 0), name: '+X' },
+        { dir: new THREE.Vector3(-1, 0, 0), name: '-X' },
+        { dir: new THREE.Vector3(0, 0, 1), name: '+Z' },
+        { dir: new THREE.Vector3(0, 0, -1), name: '-Z' }
+      ];
+    } else {
+      return [
+        { dir: new THREE.Vector3(1, 0, 0), name: '+X' },
+        { dir: new THREE.Vector3(-1, 0, 0), name: '-X' },
+        { dir: new THREE.Vector3(0, 1, 0), name: '+Y' },
+        { dir: new THREE.Vector3(0, -1, 0), name: '-Y' }
+      ];
+    }
+  }
+
+  // 3.2.2 물리적 간섭 기반의 언더컷 판별 및 슬라이드/경사코어 방향 판별 함수
+  function getPhysicalUndercuts(pos, normals, partingH, pullAxis, flipAxis) {
+    const triCount = pos.length / 9;
+    const isUndercutMap = new Uint8Array(triCount);
+    const slideDirections = new Array(triCount).fill(null);
+
+    const pullDir = new THREE.Vector3();
+    if (pullAxis === 'X') pullDir.set(1, 0, 0);
+    else if (pullAxis === 'Y') pullDir.set(0, 1, 0);
+    else pullDir.set(0, 0, 1);
+
+    if (flipAxis) {
+      pullDir.negate();
+    }
+
+    const axisKey = pullAxis.toLowerCase();
+
+    // 전체 바운딩 박스를 계산하여 간섭 최소 거리 기준값 설정
+    let minVal = Infinity, maxVal = -Infinity;
+    for (let i = 0; i < pos.length; i += 3) {
+      const idx = i * 3;
+      const val = pos[idx + (pullAxis === 'X' ? 0 : pullAxis === 'Y' ? 1 : 2)];
+      if (val < minVal) minVal = val;
+      if (val > maxVal) maxVal = val;
+    }
+    const maxDim = maxVal - minVal;
+    const minDistTolerance = Math.max(0.1, maxDim * 0.005); // 최소 0.1mm 오차 허용
+
+    // 1. 모든 삼각형 데이터 로딩 및 인덱싱
+    const triangles = [];
+    for (let i = 0; i < triCount; i++) {
+      const idx = i * 9;
+      const v0 = new THREE.Vector3(pos[idx],     pos[idx+1], pos[idx+2]);
+      const v1 = new THREE.Vector3(pos[idx+3],   pos[idx+4], pos[idx+5]);
+      const v2 = new THREE.Vector3(pos[idx+6],   pos[idx+7], pos[idx+8]);
+      
+      const centroid = new THREE.Vector3(
+        (v0.x + v1.x + v2.x) / 3,
+        (v0.y + v1.y + v2.y) / 3,
+        (v0.z + v1.z + v2.z) / 3
+      );
+      const nx = normals[idx], ny = normals[idx+1], nz = normals[idx+2];
+      const normal = new THREE.Vector3(nx, ny, nz);
+      
+      triangles.push({ v0, v1, v2, centroid, normal, idx });
+    }
+
+    // 2. 1차 백드래프트 후보 선별
+    const candidates = [];
+    for (let i = 0; i < triCount; i++) {
+      const tri = triangles[i];
+      let dotVal = tri.normal.dot(pullDir);
+      let centerOffset = tri.centroid[axisKey] - partingH;
+
+      if (flipAxis) {
+        dotVal = -dotVal;
+        centerOffset = -centerOffset;
+      }
+
+      const absDot = Math.abs(dotVal);
+      // 단순 수직 리브 벽면을 제외하기 위해 absDot < 0.70 적용 및 엄격한 백드래프트 임계치 dotVal < -0.35 / > 0.35 지정
+      const isBackdraft = ((centerOffset > 0 && dotVal < -0.35) || (centerOffset < 0 && dotVal > 0.35)) && absDot < 0.70;
+      
+      if (isBackdraft) {
+        candidates.push(tri);
+      }
+    }
+
+    // 수평 4방향 벡터 준비
+    const horizDirs = getHorizontalDirs(pullAxis);
+
+    // 3. 2차 Ray-casting 검증 (물리적 간섭이 있는 경우만 진짜 언더컷)
+    for (let c = 0; c < candidates.length; c++) {
+      const cand = candidates[c];
+      let centerOffset = cand.centroid[axisKey] - partingH;
+      if (flipAxis) centerOffset = -centerOffset;
+
+      const rayDir = (centerOffset > 0) ? pullDir.clone() : pullDir.clone().negate();
+      // 가짜 교차를 원천 차단하기 위해 법선 방향으로 0.1mm 띄워 Ray Bias 적용
+      const rayOrigin = cand.centroid.clone().add(cand.normal.clone().multiplyScalar(0.1));
+      
+      let isBlocked = false;
+      const sign = (centerOffset > 0) ? 1 : -1;
+      const originVal = rayOrigin[axisKey];
+
+      for (let t = 0; t < triCount; t++) {
+        const tri = triangles[t];
+
+        // 자기 자신 및 직전/직후 인접 삼각형 무시
+        if (Math.abs(tri.idx - cand.idx) < 9) continue;
+
+        // 탈형 경로 반대쪽에 위치한 삼각형 필터링
+        if (sign > 0) {
+          if (tri.centroid[axisKey] < originVal - 0.1) continue;
+        } else {
+          if (tri.centroid[axisKey] > originVal + 0.1) continue;
+        }
+
+        // Bounding Box 축방향 빠른 필터링
+        const tMin = Math.min(tri.v0[axisKey], tri.v1[axisKey], tri.v2[axisKey]);
+        const tMax = Math.max(tri.v0[axisKey], tri.v1[axisKey], tri.v2[axisKey]);
+        if (sign > 0 && tMax < originVal) continue;
+        if (sign < 0 && tMin > originVal) continue;
+
+        // Moller-Trumbore로 정밀 교차 판정
+        const dist = rayTriangleIntersect(rayOrigin, rayDir, tri.v0, tri.v1, tri.v2);
+        if (dist !== null && dist > minDistTolerance) {
+          isBlocked = true;
+          break; // 장애물 발견되면 즉시 종료
+        }
+      }
+
+      if (isBlocked) {
+        const candIdx = cand.idx / 9;
+        isUndercutMap[candIdx] = 1;
+
+        // 4. 수평 가시성 검사 (슬라이드 작동 가능 방향 탐색)
+        let validExitDir = null;
+        
+        for (let d = 0; d < horizDirs.length; d++) {
+          const hDir = horizDirs[d].dir;
+          const hName = horizDirs[d].name;
+          const hAxisKey = (hName.includes('X') ? 'x' : hName.includes('Y') ? 'y' : 'z');
+          const isHPositive = hName.startsWith('+');
+          const hOriginVal = rayOrigin[hAxisKey];
+          
+          let isHBlocked = false;
+          
+          for (let t = 0; t < triCount; t++) {
+            const tri = triangles[t];
+            if (Math.abs(tri.idx - cand.idx) < 9) continue;
+            
+            // 수평 경로 반대쪽 필터링
+            if (isHPositive) {
+              if (tri.centroid[hAxisKey] < hOriginVal - 0.1) continue;
+            } else {
+              if (tri.centroid[hAxisKey] > hOriginVal + 0.1) continue;
+            }
+            
+            const tMin = Math.min(tri.v0[hAxisKey], tri.v1[hAxisKey], tri.v2[hAxisKey]);
+            const tMax = Math.max(tri.v0[hAxisKey], tri.v1[hAxisKey], tri.v2[hAxisKey]);
+            if (isHPositive && tMax < hOriginVal) continue;
+            if (!isHPositive && tMin > hOriginVal) continue;
+            
+            const dist = rayTriangleIntersect(rayOrigin, hDir, tri.v0, tri.v1, tri.v2);
+            if (dist !== null && dist > minDistTolerance) {
+              isHBlocked = true;
+              break;
+            }
+          }
+          
+          if (!isHBlocked) {
+            validExitDir = hName;
+            break;
+          }
+        }
+        
+        slideDirections[candIdx] = validExitDir;
+      }
+    }
+
+    return { isUndercutMap, slideDirections };
   }
 
   function computeDraftColors(positions, normals) {
@@ -331,6 +622,9 @@ const STLAnalyzer = (() => {
       minVal = box.min.z; maxVal = box.max.z;
     }
     const partingH = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
+
+    // 물리적 간섭(Ray-casting) 기반 진짜 언더컷 맵 도출
+    const { isUndercutMap } = getPhysicalUndercuts(positions, normals, partingH, _pullAxis, _flipAxis);
 
     for (let i = 0; i < normals.length; i += 3) {
       const nx = normals[i], ny = normals[i+1], nz = normals[i+2];
@@ -354,10 +648,11 @@ const STLAnalyzer = (() => {
       const absVal = Math.abs(dotVal);
       let r, g, b;
 
-      // Actual Undercut (Backdraft): normal faces backwards relative to its side of the mold parting plane
-      const isBackdraft = (centerOffset > 0 && dotVal < -0.15) || (centerOffset < 0 && dotVal > 0.15);
+      // 정점 인덱스로부터 해당 삼각형의 인덱스(i/9)를 구함
+      const triIdx = Math.floor(i / 9);
+      const isPhysicalUndercut = isUndercutMap[triIdx] === 1;
 
-      if (isBackdraft) {
+      if (isPhysicalUndercut) {
         // ACTUAL UNDERCUT (RED)
         r = 1.0; g = 0.15; b = 0.2;
       } else if (absVal > 0.98) {
@@ -403,6 +698,103 @@ const STLAnalyzer = (() => {
     _controls.update();
   }
 
+  function groupPointsIntoFeatures(points, cellSize) {
+    const cells = {};
+    for (let i = 0; i < points.length; i += 3) {
+      const x = points[i], y = points[i+1], z = points[i+2];
+      const cx = Math.floor(x / cellSize);
+      const cy = Math.floor(y / cellSize);
+      const cz = Math.floor(z / cellSize);
+      const key = `${cx},${cy},${cz}`;
+      if (!cells[key]) cells[key] = [];
+      cells[key].push(x, y, z);
+    }
+
+    const visited = new Set();
+    const components = [];
+
+    const getNeighbors = (key) => {
+      const parts = key.split(',');
+      const cx = parseInt(parts[0]), cy = parseInt(parts[1]), cz = parseInt(parts[2]);
+      const neighbors = [];
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            if (dx === 0 && dy === 0 && dz === 0) continue;
+            const nk = `${cx+dx},${cy+dy},${cz+dz}`;
+            if (cells[nk]) neighbors.push(nk);
+          }
+        }
+      }
+      return neighbors;
+    };
+
+    for (const key in cells) {
+      if (visited.has(key)) continue;
+      const componentPoints = [];
+      const queue = [key];
+      visited.add(key);
+
+      while (queue.length > 0) {
+        const curr = queue.shift();
+        componentPoints.push(...cells[curr]);
+        
+        const neighbors = getNeighbors(curr);
+        neighbors.forEach(n => {
+          if (!visited.has(n)) {
+            visited.add(n);
+            queue.push(n);
+          }
+        });
+      }
+      components.push(componentPoints);
+    }
+
+    return components;
+  }
+
+  function processCoreClusters(clusters, cSize, avgDim) {
+    let finalFeatures = [];
+    for (const dir in clusters) {
+      if (clusters[dir].length < 30) continue; // Skip very small noise clusters
+      
+      const features = groupPointsIntoFeatures(clusters[dir], cSize);
+      features.forEach(featPoints => {
+        if (featPoints.length < 15) return; // Skip minor noise features
+        
+        // Bounding box filter
+        let minX = Infinity, minY = Infinity, minZ = Infinity;
+        let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        for (let j = 0; j < featPoints.length; j += 3) {
+          minX = Math.min(minX, featPoints[j]);   maxX = Math.max(maxX, featPoints[j]);
+          minY = Math.min(minY, featPoints[j+1]); maxY = Math.max(maxY, featPoints[j+1]);
+          minZ = Math.min(minZ, featPoints[j+2]); maxZ = Math.max(maxZ, featPoints[j+2]);
+        }
+        const fdx = maxX - minX;
+        const fdy = maxY - minY;
+        const fdz = maxZ - minZ;
+        const maxFeatureDim = Math.max(fdx, fdy, fdz);
+        const volume = fdx * fdy * fdz;
+        
+        // 모델 크기 대비 최소 7% 이상의 가치 있는 크기를 지닌 기구식 언더컷 구간만 허용
+        if (maxFeatureDim < avgDim * 0.07) return;
+        
+        finalFeatures.push({
+          dir,
+          points: featPoints,
+          center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: (minZ + maxZ) / 2 },
+          dims: { dx: fdx, dy: fdy, dz: fdz },
+          volume: volume
+        });
+      });
+    }
+    
+    // Sort features by volume descending for ordering/index consistency, but do not slice/cap.
+    finalFeatures.sort((a, b) => b.volume - a.volume);
+    
+    return finalFeatures;
+  }
+
   /* ──────────────────────────────────────
      4. ANALYSIS ENGINE
   ────────────────────────────────────── */
@@ -442,6 +834,9 @@ const STLAnalyzer = (() => {
     }
     const partingH = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
 
+    // 물리적 간섭(Ray-casting) 기반 진짜 언더컷 맵 도출
+    const { isUndercutMap, slideDirections } = getPhysicalUndercuts(pos, normals, partingH, _pullAxis, _flipAxis);
+
     let undercutFaces = 0, marginalFaces = 0, okFaces = 0, topFaces = 0;
 
     for (let i = 0; i < normals.length; i += 3) {
@@ -465,9 +860,11 @@ const STLAnalyzer = (() => {
 
       const absnz = Math.abs(dotVal);
       
-      const isBackdraft = (centerOffset > 0 && dotVal < -0.15) || (centerOffset < 0 && dotVal > 0.15);
+      // 해당 삼각형이 물리적 언더컷인지 판별
+      const triIdx = Math.floor(i / 9);
+      const isPhysicalUndercut = isUndercutMap[triIdx] === 1;
 
-      if (isBackdraft) {
+      if (isPhysicalUndercut) {
         undercutFaces++;
       } else if (absnz > 0.98) {
         topFaces++;
@@ -532,6 +929,39 @@ const STLAnalyzer = (() => {
       desc: `복잡도 기반 예측: 언더컷 비율 ${undercutPct.toFixed(0)}% → 웰드라인 발생 가능성 ${undercutPct > 20 ? '높음 🔴' : undercutPct > 8 ? '중간 🟡' : '낮음 🟢'}.`,
     });
 
+    // Material-specific engineering guidelines
+    if (matKey === 'FORTRON') {
+      issues.push({
+        level: 'warning',
+        title: 'FORTRON 고온 성형 가스 및 부식 경고',
+        desc: 'PPS(FORTRON) 수지는 고온 사출 시 부식성 가스(H2S, SO2, Cl-)가 방출됩니다. 금형 부식 방지를 위해 SUS420J2 금형강 사용 및 CrN(질화크롬) 표면 처리를 적극 권장합니다.'
+      });
+      issues.push({
+        level: 'info',
+        title: 'FORTRON 온도 및 예비건조 조건',
+        desc: '실린더 300~340℃, 금형 130~160℃를 준수하십시오. 120℃ 이하 시 충진 불량 및 광택 저하가 발생하며, 140℃에서 3시간 이상 예비 건조하여 수분을 엄격히 제어해야 은조(Silver Streak)를 방지합니다.'
+      });
+    } else if (matKey === 'POM') {
+      issues.push({
+        level: 'warning',
+        title: 'POM 수지 열분해 가스 경고',
+        desc: 'POM은 실린더 온도 과열(220℃ 이상) 또는 장시간 체류 시 포름알데히드 가스로 분해되어 흑조, 흑점, 변색 불량을 유발하므로 온도 및 유동 배기를 주기적으로 체크해야 합니다.'
+      });
+    } else if (matKey === 'PC') {
+      issues.push({
+        level: 'warning',
+        title: 'PC 수지 가수분해 주의 (건조 필수)',
+        desc: 'PC 수지는 수분이 존재할 경우 고온 사출 시 가수분해되어 강도가 급감합니다. 120℃ 제습 건조기에서 10시간 이상 충분히 예비 건조하여 흡수율을 제어해야 합니다.'
+      });
+    }
+
+    // Ejection & Ejector Pin design guidelines
+    issues.push({
+      level: 'info',
+      title: '취출 금형 구조 가이드 (밀핀 백화 방지)',
+      desc: '이형 및 취출 시 리브(Rib) 부위는 사각 밀핀을 사용하거나 본살과 걸치도록 하고, 보스(Boss) 부위는 슬리브(Sleeve) 구조 밀핀을 채택하여 변형 및 백화 불량을 예방해야 합니다.'
+    });
+
     // Score
     const errorCount   = issues.filter(i=>i.level==='error').length;
     const warningCount = issues.filter(i=>i.level==='warning').length;
@@ -545,62 +975,42 @@ const STLAnalyzer = (() => {
     for (let i = 0; i < normals.length; i += 3) {
       const nx = normals[i], ny = normals[i+1], nz = normals[i+2];
       const vx = pos[i], vy = pos[i+1], vz = pos[i+2];
-      let dotVal = nz;
-      let centerOff = vz - centerZ;
-      if (_pullAxis === 'X') { dotVal = nx; centerOff = vx - centerX; }
-      else if (_pullAxis === 'Y') { dotVal = ny; centerOff = vy - centerY; }
       
-      if (_flipAxis) {
-        dotVal = -dotVal;
-        centerOff = -centerOff;
-      }
+      const triIdx = Math.floor(i / 9);
+      const isPhysicalUndercut = isUndercutMap[triIdx] === 1;
       
-      if ((centerOff > 0 && dotVal < -0.15) || (centerOff < 0 && dotVal > 0.15)) {
-        const toCenter = new THREE.Vector3(vx - centerX, vy - centerY, vz - centerZ);
+      if (isPhysicalUndercut) {
+        const exitDir = slideDirections[triIdx];
         
         let pDir = '';
         if (_pullAxis === 'X') { pDir = Math.abs(ny) > Math.abs(nz) ? (ny > 0 ? '+Y':'-Y') : (nz > 0 ? '+Z':'-Z'); }
         else if (_pullAxis === 'Y') { pDir = Math.abs(nx) > Math.abs(nz) ? (nx > 0 ? '+X':'-X') : (nz > 0 ? '+Z':'-Z'); }
         else { pDir = Math.abs(nx) > Math.abs(ny) ? (nx > 0 ? '+X':'-X') : (ny > 0 ? '+Y':'-Y'); }
         
-        if (toCenter.dot(new THREE.Vector3(nx, ny, nz)) > 0) {
-          if (!slideClusters[pDir]) slideClusters[pDir] = [];
-          slideClusters[pDir].push({x:vx, y:vy, z:vz});
+        if (exitDir !== null) {
+          // 수평 탈출 경로가 존재하므로 슬라이드 코어로 판정
+          const sDir = exitDir;
+          if (!slideClusters[sDir]) slideClusters[sDir] = [];
+          slideClusters[sDir].push(vx, vy, vz);
         } else {
+          // 사방이 벽으로 막혔으므로 경사 코어(변형코어)로 판정
           if (!lifterClusters[pDir]) lifterClusters[pDir] = [];
-          lifterClusters[pDir].push({x:vx, y:vy, z:vz});
+          lifterClusters[pDir].push(vx, vy, vz);
         }
       }
     }
 
-    // Filter out small clusters (under 30 points) to avoid noise/erroneous lifters/slides
-    for (const dir in slideClusters) {
-      if (slideClusters[dir].length < 30) {
-        delete slideClusters[dir];
-      }
-    }
-    for (const dir in lifterClusters) {
-      if (lifterClusters[dir].length < 30) {
-        delete lifterClusters[dir];
-      }
-    }
-    
-    Object.keys(slideClusters).forEach(dir => {
-      let min = {x: Infinity, y: Infinity, z: Infinity}, max = {x: -Infinity, y: -Infinity, z: -Infinity};
-      slideClusters[dir].forEach(p => {
-        min.x = Math.min(min.x, p.x); min.y = Math.min(min.y, p.y); min.z = Math.min(min.z, p.z);
-        max.x = Math.max(max.x, p.x); max.y = Math.max(max.y, p.y); max.z = Math.max(max.z, p.z);
-      });
-      moldFeatures.slides.push({ dir, center: { x: (min.x+max.x)/2, y: (min.y+max.y)/2, z: (min.z+max.z)/2 } });
+    const avgDim = (dx + dy + dz) / 3;
+    const cSize = Math.max(5.0, Math.min(avgDim * 0.12, 25.0));
+
+    const finalSlides = processCoreClusters(slideClusters, cSize, avgDim);
+    const finalLifters = processCoreClusters(lifterClusters, cSize, avgDim);
+
+    finalSlides.forEach(feat => {
+      moldFeatures.slides.push({ dir: feat.dir, center: feat.center });
     });
-    
-    Object.keys(lifterClusters).forEach(dir => {
-      let min = {x: Infinity, y: Infinity, z: Infinity}, max = {x: -Infinity, y: -Infinity, z: -Infinity};
-      lifterClusters[dir].forEach(p => {
-        min.x = Math.min(min.x, p.x); min.y = Math.min(min.y, p.y); min.z = Math.min(min.z, p.z);
-        max.x = Math.max(max.x, p.x); max.y = Math.max(max.y, p.y); max.z = Math.max(max.z, p.z);
-      });
-      moldFeatures.lifters.push({ dir, center: { x: (min.x+max.x)/2, y: (min.y+max.y)/2, z: (min.z+max.z)/2 } });
+    finalLifters.forEach(feat => {
+      moldFeatures.lifters.push({ dir: feat.dir, center: feat.center });
     });
 
     return {
@@ -614,40 +1024,132 @@ const STLAnalyzer = (() => {
     setPullAxis(_pullAxis);
   }
 
+  function updateGimbalHighlight() {
+    if (!_gimbalWidget) return;
+    _gimbalWidget.traverse(child => {
+      if (child.isMesh || child.isSprite) {
+        const isSelected = child.name === `gimbal_${_pullAxis}`;
+        if (child.isMesh) {
+          if (child.material) {
+            child.material.transparent = true;
+            if (isSelected) {
+              child.material.opacity = 1.0;
+              if (child.geometry.type === 'CylinderGeometry') {
+                child.scale.set(2.0, 1.0, 2.0);
+              } else if (child.geometry.type === 'ConeGeometry') {
+                child.scale.set(1.6, 1.6, 1.6);
+              }
+            } else {
+              child.material.opacity = 0.25;
+              child.scale.set(1.0, 1.0, 1.0);
+            }
+            child.material.needsUpdate = true;
+          }
+        } else if (child.isSprite) {
+          if (child.material) {
+            if (isSelected) {
+              child.material.opacity = 1.0;
+              child.scale.set(8, 8, 1);
+            } else {
+              child.material.opacity = 0.25;
+              child.scale.set(5, 5, 1);
+            }
+            child.material.needsUpdate = true;
+          }
+        }
+      }
+    });
+  }
+
   function setPullAxis(axis) {
     _pullAxis = axis;
-    if (!_mesh) return;
+    if (!_mesh || !_geometry) return;
 
     if (!_mesh.targetQuaternion) {
       _mesh.targetQuaternion = new THREE.Quaternion();
     }
 
-    const targetAxis = new THREE.Vector3(0, 1, 0);
-    const sourceAxis = new THREE.Vector3();
+    const autoRotateChk = document.getElementById('chk-auto-rotate');
+    const autoRotate = autoRotateChk ? autoRotateChk.checked : true;
 
-    if (axis === 'X') {
-      sourceAxis.set(1, 0, 0);
-    } else if (axis === 'Y') {
-      sourceAxis.set(0, 1, 0);
+    if (autoRotate) {
+      const targetAxis = new THREE.Vector3(0, 1, 0);
+      const sourceAxis = new THREE.Vector3();
+
+      if (axis === 'X') {
+        sourceAxis.set(1, 0, 0);
+      } else if (axis === 'Y') {
+        sourceAxis.set(0, 1, 0);
+      } else {
+        sourceAxis.set(0, 0, 1);
+      }
+      
+      if (_flipAxis) {
+        sourceAxis.negate();
+      }
+
+      _mesh.targetQuaternion.setFromUnitVectors(sourceAxis, targetAxis);
     } else {
-      sourceAxis.set(0, 0, 1);
+      _mesh.targetQuaternion.set(0, 0, 0, 1);
+    }
+
+    updateGimbalHighlight();
+    updatePullArrow();
+  }
+
+  function updatePullArrow() {
+    if (!_mesh || !_geometry) return;
+    
+    _geometry.computeBoundingBox();
+    const box = _geometry.boundingBox;
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const radius = size.length();
+    
+    if (!_pullArrow) {
+      const dir = new THREE.Vector3(0, 1, 0);
+      const origin = new THREE.Vector3(0, 0, 0);
+      const length = radius * 0.4;
+      const hex = 0x00d4ff;
+      _pullArrow = new THREE.ArrowHelper(dir, origin, length, hex, radius * 0.08, radius * 0.04);
+      _scene.add(_pullArrow);
     }
     
-    if (_flipAxis) {
-      sourceAxis.negate();
+    const dir = new THREE.Vector3();
+    if (_pullAxis === 'X') {
+      dir.set(1, 0, 0);
+    } else if (_pullAxis === 'Y') {
+      dir.set(0, 1, 0);
+    } else {
+      dir.set(0, 0, 1);
     }
-
-    _mesh.targetQuaternion.setFromUnitVectors(sourceAxis, targetAxis);
+    if (_flipAxis) {
+      dir.negate();
+    }
+    
+    const autoRotateChk = document.getElementById('chk-auto-rotate');
+    const autoRotate = autoRotateChk ? autoRotateChk.checked : true;
+    
+    if (autoRotate) {
+      _pullArrow.setDirection(new THREE.Vector3(0, 1, 0));
+      _pullArrow.position.set(0, size.y * 0.5 + radius * 0.15, 0);
+    } else {
+      _pullArrow.setDirection(dir);
+      const pos = dir.clone().multiplyScalar(radius * 0.55);
+      _pullArrow.position.copy(pos);
+    }
   }
 
   function recolorGeometry() {
     if (!_geometry || !_mesh) return;
     const positions = _geometry.attributes.position.array;
+    const normals   = _geometry.attributes.normal.array;
     let colors;
-    if (_flowOverlayActive && _flowDistances) {
+    if (_shrinkageOverlayActive) {
+      colors = computeShrinkageColors(positions, normals);
+    } else if (_flowOverlayActive && _flowDistances) {
       colors = computeFlowColors(positions, _flowDistances, _maxFlowDistance, _flowAnimationTime);
     } else {
-      const normals = _geometry.attributes.normal.array;
       colors = computeDraftColors(positions, normals);
     }
     _geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -661,7 +1163,7 @@ const STLAnalyzer = (() => {
 
   function updateCoreHelpers(visible) {
     if (_coreHelpers) {
-      _mesh.remove(_coreHelpers);
+      if (_mesh) _mesh.remove(_coreHelpers);
       _coreHelpers = null;
     }
 
@@ -687,6 +1189,9 @@ const STLAnalyzer = (() => {
     }
     const partingH = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
 
+    // 물리적 간섭(Ray-casting) 기반 진짜 언더컷 맵 도출
+    const { isUndercutMap, slideDirections } = getPhysicalUndercuts(pos, norm, partingH, _pullAxis, _flipAxis);
+
     const slideClusters = {};
     const lifterClusters = {};
 
@@ -694,52 +1199,28 @@ const STLAnalyzer = (() => {
       const nx = norm[i], ny = norm[i+1], nz = norm[i+2];
       const vx = pos[i], vy = pos[i+1], vz = pos[i+2];
 
-      let dotVal = nz;
-      let centerOffset = vz - partingH;
-      if (_pullAxis === 'X') {
-        dotVal = nx;
-        centerOffset = vx - partingH;
-      } else if (_pullAxis === 'Y') {
-        dotVal = ny;
-        centerOffset = vy - partingH;
-      }
-      
-      if (_flipAxis) {
-        dotVal = -dotVal;
-        centerOffset = -centerOffset;
-      }
+      const triIdx = Math.floor(i / 9);
+      const isPhysicalUndercut = isUndercutMap[triIdx] === 1;
 
-      const isBackdraft = (centerOffset > 0 && dotVal < -0.15) || (centerOffset < 0 && dotVal > 0.15);
-
-      if (isBackdraft) {
+      if (isPhysicalUndercut) {
         const vx_val = pos[i], vy_val = pos[i+1], vz_val = pos[i+2];
-        const toCenterVec = new THREE.Vector3(vx_val, vy_val, vz_val).sub(center);
-        const normalVec = new THREE.Vector3(nx, ny, nz);
+        const exitDir = slideDirections[triIdx];
         
         let pDir = '';
         if (_pullAxis === 'X') { pDir = Math.abs(ny) > Math.abs(nz) ? (ny > 0 ? '+Y':'-Y') : (nz > 0 ? '+Z':'-Z'); }
         else if (_pullAxis === 'Y') { pDir = Math.abs(nx) > Math.abs(nz) ? (nx > 0 ? '+X':'-X') : (nz > 0 ? '+Z':'-Z'); }
         else { pDir = Math.abs(nx) > Math.abs(ny) ? (nx > 0 ? '+X':'-X') : (ny > 0 ? '+Y':'-Y'); }
         
-        if (toCenterVec.dot(normalVec) > 0) {
-          if (!slideClusters[pDir]) slideClusters[pDir] = [];
-          slideClusters[pDir].push(vx_val, vy_val, vz_val);
+        if (exitDir !== null) {
+          // 수평 탈출 경로가 존재하므로 슬라이드 코어로 판정
+          const sDir = exitDir;
+          if (!slideClusters[sDir]) slideClusters[sDir] = [];
+          slideClusters[sDir].push(vx_val, vy_val, vz_val);
         } else {
+          // 사방이 벽으로 막혔으므로 경사 코어(변형코어)로 판정
           if (!lifterClusters[pDir]) lifterClusters[pDir] = [];
           lifterClusters[pDir].push(vx_val, vy_val, vz_val);
         }
-      }
-    }
-
-    // Filter out small clusters (under 30 points) to avoid noise/erroneous lifters/slides
-    for (const dir in slideClusters) {
-      if (slideClusters[dir].length < 30) {
-        delete slideClusters[dir];
-      }
-    }
-    for (const dir in lifterClusters) {
-      if (lifterClusters[dir].length < 30) {
-        delete lifterClusters[dir];
       }
     }
 
@@ -759,104 +1240,127 @@ const STLAnalyzer = (() => {
     function drawCoreMechanicalUnit(positions, color, dirStr, isSlide, index) {
       if (positions.length === 0) return;
 
-      let minX=Infinity, minY=Infinity, minZ=Infinity;
-      let maxX=-Infinity, maxY=-Infinity, maxZ=-Infinity;
+      let fMinX=Infinity, fMinY=Infinity, fMinZ=Infinity;
+      let fMaxX=-Infinity, fMaxY=-Infinity, fMaxZ=-Infinity;
       for (let j = 0; j < positions.length; j += 3) {
-        minX = Math.min(minX, positions[j]);   maxX = Math.max(maxX, positions[j]);
-        minY = Math.min(minY, positions[j+1]); maxY = Math.max(maxY, positions[j+1]);
-        minZ = Math.min(minZ, positions[j+2]); maxZ = Math.max(maxZ, positions[j+2]);
+        fMinX = Math.min(fMinX, positions[j]);   fMaxX = Math.max(fMaxX, positions[j]);
+        fMinY = Math.min(fMinY, positions[j+1]); fMaxY = Math.max(fMaxY, positions[j+1]);
+        fMinZ = Math.min(fMinZ, positions[j+2]); fMaxZ = Math.max(fMaxZ, positions[j+2]);
       }
 
-      const dx = maxX - minX;
-      const dy = maxY - minY;
-      const dz = maxZ - minZ;
+      const fdx = fMaxX - fMinX;
+      const fdy = fMaxY - fMinY;
+      const fdz = fMaxZ - fMinZ;
 
-      const size = new THREE.Vector3();
-      box.getSize(size);
-      const avgModelDim = (size.x + size.y + size.z) / 3;
+      const fcx = fMinX + fdx / 2;
+      const fcy = fMinY + fdy / 2;
+      const fcz = fMinZ + fdz / 2;
+
+      const modelSize = new THREE.Vector3();
+      box.getSize(modelSize);
+      const avgModelDim = (modelSize.x + modelSize.y + modelSize.z) / 3;
+
+      const margin = Math.max(0.5, Math.min(fdx, fdy, fdz) * 0.05);
+      const pullDir = getDirVec(dirStr);
+
+      const pullAxisDir = new THREE.Vector3();
+      if (_pullAxis === 'X') pullAxisDir.set(_flipAxis ? -1 : 1, 0, 0);
+      else if (_pullAxis === 'Y') pullAxisDir.set(0, _flipAxis ? -1 : 1, 0);
+      else pullAxisDir.set(0, 0, _flipAxis ? -1 : 1);
 
       if (isSlide) {
-        const minSlideDim = avgModelDim * 0.15;
-        const slideW = Math.max(minSlideDim, dx * 1.2);
-        const slideH = Math.max(minSlideDim, dy * 1.2);
-        const slideD = Math.max(minSlideDim, dz * 1.2);
-        
-        // SLIDER HEAD (Molding surface block)
-        const headGeo = new THREE.BoxGeometry(slideW, slideH, slideD);
-        const headMat = new THREE.MeshPhongMaterial({ color: color, transparent: true, opacity: 0.5, shininess: 90, depthWrite: false });
+        const headW = fdx + margin;
+        const headH = fdy + margin;
+        const headD = fdz + margin;
+
+        const headGeo = new THREE.BoxGeometry(headW, headH, headD);
+        const headMat = new THREE.MeshPhongMaterial({
+          color: color, transparent: true, opacity: 0.35,
+          shininess: 90, depthWrite: false
+        });
         const headMesh = new THREE.Mesh(headGeo, headMat);
         headMesh.name = `slide_${index}_head`;
-        headMesh.position.set(minX + dx/2, minY + dy/2, minZ + dz/2);
-        const edgeLine = new THREE.LineSegments(new THREE.EdgesGeometry(headGeo), new THREE.LineBasicMaterial({ color: color }));
-        headMesh.add(edgeLine);
+        headMesh.position.set(fcx, fcy, fcz);
+        headMesh.add(new THREE.LineSegments(
+          new THREE.EdgesGeometry(headGeo),
+          new THREE.LineBasicMaterial({ color: color, linewidth: 2 })
+        ));
         _coreHelpers.add(headMesh);
 
-        // SLIDER BODY (Block extending outward)
-        const bodyLen = Math.max(avgModelDim * 0.4, (dx+dy+dz) * 0.8);
-        // Align body with pull direction
-        const bodyGeo = new THREE.BoxGeometry(Math.max(avgModelDim * 0.08, slideW * 0.6), slideH * 0.7, bodyLen);
-        bodyGeo.translate(0, 0, bodyLen/2 + slideD/2);
-        const bodyMat = new THREE.MeshPhongMaterial({ color: 0x223344, transparent: true, opacity: 0.85, shininess: 50 });
+        const featureAvg = (fdx + fdy + fdz) / 3;
+        const bodyLen = Math.max(featureAvg * 1.5, avgModelDim * 0.25);
+        const bodyThick = Math.max(headW, headH, headD) * 0.5;
+        const bodyWidth = bodyThick * 0.8;
+        const bodyGeo = new THREE.BoxGeometry(bodyWidth, bodyThick, bodyLen);
+        bodyGeo.translate(0, 0, bodyLen / 2);
+
+        const bodyMat = new THREE.MeshPhongMaterial({
+          color: 0x334455, transparent: true, opacity: 0.7, shininess: 50
+        });
         const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
         bodyMesh.name = `slide_${index}_body`;
         bodyMesh.position.copy(headMesh.position);
-        
-        // Rotate body to face arrowDir (which is the slide pulling direction)
-        const arrowDir = getDirVec(dirStr);
-        const lookDir = arrowDir.clone().normalize();
-        bodyMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), lookDir);
+
+        bodyMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), pullDir.clone().normalize());
         _coreHelpers.add(bodyMesh);
 
-        // Base Rail Plate (under the slide)
-        const railGeo = new THREE.BoxGeometry(slideW * 1.1, avgModelDim * 0.03, bodyLen + slideD);
-        railGeo.translate(0, -slideH/2 - (avgModelDim * 0.015), bodyLen/2);
-        const railMat = new THREE.MeshPhongMaterial({ color: 0x444455 });
-        const railMesh = new THREE.Mesh(railGeo, railMat);
-        railMesh.name = `slide_${index}_rail`;
-        railMesh.position.copy(headMesh.position);
-        railMesh.quaternion.copy(bodyMesh.quaternion);
-        _coreHelpers.add(railMesh);
-
-        // Stronger Direction arrow
-        const arrowLength = bodyLen * 0.8;
-        // Start arrow at the back of the body
-        const arrowStart = headMesh.position.clone().add(lookDir.clone().multiplyScalar(slideD/2));
-        const arrow = new THREE.ArrowHelper(lookDir, arrowStart, arrowLength, color, avgModelDim * 0.08, avgModelDim * 0.04);
+        const arrowLen = bodyLen * 0.7;
+        const arrowStart = headMesh.position.clone();
+        const arrow = new THREE.ArrowHelper(
+          pullDir.clone().normalize(), arrowStart,
+          arrowLen, color, featureAvg * 0.2, featureAvg * 0.1
+        );
         _coreHelpers.add(arrow);
 
-        // Label
-        const label = createTextSprite(`슬라이드 코어 #${index}`, color, avgModelDim * 0.12);
-        label.position.copy(headMesh.position).add(new THREE.Vector3(0, slideH + (avgModelDim * 0.1), 0));
+        const label = createTextSprite(`슬라이드 #${index}`, color, avgModelDim * 0.1);
+        const labelUp = pullAxisDir.clone().multiplyScalar(Math.max(headH, headW, headD) * 0.8);
+        label.position.copy(headMesh.position).add(labelUp);
         _coreHelpers.add(label);
 
       } else {
-        const minLiftDim = avgModelDim * 0.08;
-        const liftW = Math.max(minLiftDim, dx * 1.2);
-        const liftH = Math.max(minLiftDim, dy * 1.2);
-        const liftD = Math.max(minLiftDim, dz * 1.2);
+        const headW = fdx + margin;
+        const headH = fdy + margin;
+        const headD = fdz + margin;
 
-        // LIFTER head (Molding surface block)
-        const coreGeo = new THREE.BoxGeometry(liftW, liftH, liftD);
-        const coreMat = new THREE.MeshPhongMaterial({ color: color, transparent: true, opacity: 0.5, shininess: 90, depthWrite: false });
+        const coreGeo = new THREE.BoxGeometry(headW, headH, headD);
+        const coreMat = new THREE.MeshPhongMaterial({
+          color: color, transparent: true, opacity: 0.35,
+          shininess: 90, depthWrite: false
+        });
         const coreMesh = new THREE.Mesh(coreGeo, coreMat);
         coreMesh.name = `lifter_${index}_head`;
-        coreMesh.position.set(minX + dx/2, minY + dy/2, minZ + dz/2);
-        const edgeLine = new THREE.LineSegments(new THREE.EdgesGeometry(coreGeo), new THREE.LineBasicMaterial({ color: color }));
-        coreMesh.add(edgeLine);
+        coreMesh.position.set(fcx, fcy, fcz);
+        coreMesh.add(new THREE.LineSegments(
+          new THREE.EdgesGeometry(coreGeo),
+          new THREE.LineBasicMaterial({ color: color, linewidth: 2 })
+        ));
         _coreHelpers.add(coreMesh);
 
-        // Calculate slant direction (project offset from center, slant by 12 degrees)
-        const slantDir = new THREE.Vector3().copy(coreMesh.position).sub(center);
-        slantDir.y = 0; // horizontal vector outwards
-        slantDir.normalize().multiplyScalar(0.25); // xz offset for 10-15 degree slant
-        slantDir.y = -0.96; // major vertical component downwards
-        slantDir.normalize();
+        const moldBaseDir = pullAxisDir.clone().negate();
+        const lateralOffset = new THREE.Vector3(fcx, fcy, fcz).sub(center);
+        if (_pullAxis === 'X') lateralOffset.x = 0;
+        else if (_pullAxis === 'Y') lateralOffset.y = 0;
+        else lateralOffset.z = 0;
 
-        // Slanted lifter rod (Rectangular bar) extending downwards
-        const rodLength = Math.max(avgModelDim * 0.8, Math.abs(coreMesh.position.y - (-size.y/2)) + (avgModelDim * 0.2));
-        const rodGeo = new THREE.BoxGeometry(liftW * 0.7, rodLength, liftD * 0.7);
-        rodGeo.translate(0, -rodLength/2, 0); // extend down
-        const rodMat = new THREE.MeshStandardMaterial({ color: 0x99aacc, metalness: 0.8, roughness: 0.2 });
+        if (lateralOffset.length() > 0.001) {
+          lateralOffset.normalize().multiplyScalar(0.22);
+        }
+
+        const slantDir = moldBaseDir.clone().add(lateralOffset).normalize();
+
+        let distToBase;
+        if (_pullAxis === 'X') distToBase = Math.abs(fcx - (_flipAxis ? box.max.x : box.min.x));
+        else if (_pullAxis === 'Y') distToBase = Math.abs(fcy - (_flipAxis ? box.max.y : box.min.y));
+        else distToBase = Math.abs(fcz - (_flipAxis ? box.max.z : box.min.z));
+
+        const rodLength = Math.max(distToBase + avgModelDim * 0.15, avgModelDim * 0.4);
+        const rodThick = Math.max(headW, headD) * 0.5;
+
+        const rodGeo = new THREE.BoxGeometry(rodThick, rodLength, rodThick);
+        rodGeo.translate(0, -rodLength / 2, 0);
+        const rodMat = new THREE.MeshStandardMaterial({
+          color: 0x99aacc, metalness: 0.7, roughness: 0.3
+        });
         const rodMesh = new THREE.Mesh(rodGeo, rodMat);
         rodMesh.name = `lifter_${index}_rod`;
         rodMesh.position.copy(coreMesh.position);
@@ -864,38 +1368,40 @@ const STLAnalyzer = (() => {
         rodMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), slantDir);
         _coreHelpers.add(rodMesh);
 
-        // Slider base foot/bushing
-        const footGeo = new THREE.BoxGeometry(liftW * 1.5, avgModelDim * 0.05, liftD * 1.5);
-        const footMat = new THREE.MeshPhongMaterial({ color: 0x33333b });
-        const footMesh = new THREE.Mesh(footGeo, footMat);
-        footMesh.name = `lifter_${index}_foot`;
-        const footOffset = slantDir.clone().multiplyScalar(rodLength);
-        footMesh.position.copy(coreMesh.position).add(footOffset);
-        _coreHelpers.add(footMesh);
-
-        // Slanted arrow showing diagonal ejection direction
-        const ejectDir = new THREE.Vector3(-slantDir.x, -slantDir.y, -slantDir.z).normalize(); // upwards slant
-        const arrowStart = footMesh.position.clone();
-        const arrowLength = rodLength * 0.6;
-        const arrow = new THREE.ArrowHelper(ejectDir, arrowStart, arrowLength, color, avgModelDim * 0.08, avgModelDim * 0.04);
+        const ejectDir = slantDir.clone().negate();
+        const arrowLen = rodLength * 0.45;
+        const featureAvg = (fdx + fdy + fdz) / 3;
+        const arrow = new THREE.ArrowHelper(
+          ejectDir, coreMesh.position.clone(),
+          arrowLen, color, featureAvg * 0.2, featureAvg * 0.1
+        );
         _coreHelpers.add(arrow);
-        
+
         // Label
-        const label = createTextSprite(`변형 코어 #${index}`, color, avgModelDim * 0.12);
-        label.position.copy(coreMesh.position).add(new THREE.Vector3(0, liftH + (avgModelDim * 0.1), 0));
+        const label = createTextSprite(`변형코어 #${index}`, color, avgModelDim * 0.1);
+        const labelUp = pullAxisDir.clone().multiplyScalar(Math.max(headH, headW, headD) * 0.8);
+        label.position.copy(coreMesh.position).add(labelUp);
         _coreHelpers.add(label);
       }
     }
 
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const avgDim = (size.x + size.y + size.z) / 3;
+    const cSize = Math.max(5.0, Math.min(avgDim * 0.12, 25.0));
+
+    const finalSlides = processCoreClusters(slideClusters, cSize, avgDim);
+    const finalLifters = processCoreClusters(lifterClusters, cSize, avgDim);
+
     let sIdx = 1;
-    for (const dir in slideClusters) {
-      drawCoreMechanicalUnit(slideClusters[dir], 0x00d4ff, dir, true, sIdx++);
-    }
+    finalSlides.forEach(feat => {
+      drawCoreMechanicalUnit(feat.points, 0x00d4ff, feat.dir, true, sIdx++);
+    });
     
     let lIdx = 1;
-    for (const dir in lifterClusters) {
-      drawCoreMechanicalUnit(lifterClusters[dir], 0xff8800, dir, false, lIdx++);
-    }
+    finalLifters.forEach(feat => {
+      drawCoreMechanicalUnit(feat.points, 0xff8800, feat.dir, false, lIdx++);
+    });
 
     _mesh.add(_coreHelpers);
   }
@@ -936,11 +1442,12 @@ const STLAnalyzer = (() => {
   function createLabeledAxes(size = 20) {
     const group = new THREE.Group();
 
-    const createAxisCylinder = (dir, color) => {
+    const createAxisCylinder = (dir, color, name) => {
       const geom = new THREE.CylinderGeometry(0.5, 0.5, size, 8);
       geom.translate(0, size / 2, 0);
       const mat = new THREE.MeshBasicMaterial({ color: color });
       const mesh = new THREE.Mesh(geom, mat);
+      mesh.name = name;
       
       const up = new THREE.Vector3(0, 1, 0);
       mesh.quaternion.setFromUnitVectors(up, dir.clone().normalize());
@@ -951,35 +1458,39 @@ const STLAnalyzer = (() => {
     const yDir = new THREE.Vector3(0, 1, 0);
     const zDir = new THREE.Vector3(0, 0, 1);
 
-    const xAxis = createAxisCylinder(xDir, 0xff3333);
-    const yAxis = createAxisCylinder(yDir, 0x33ff33);
-    const zAxis = createAxisCylinder(zDir, 0x3333ff);
+    const xAxis = createAxisCylinder(xDir, 0xff3333, 'gimbal_X');
+    const yAxis = createAxisCylinder(yDir, 0x33ff33, 'gimbal_Y');
+    const zAxis = createAxisCylinder(zDir, 0x3333ff, 'gimbal_Z');
 
     group.add(xAxis);
     group.add(yAxis);
     group.add(zAxis);
 
-    const createArrowHead = (dir, color, pos) => {
+    const createArrowHead = (dir, color, pos, name) => {
       const geom = new THREE.ConeGeometry(1.2, 4, 8);
       geom.translate(0, 2, 0);
       const mat = new THREE.MeshBasicMaterial({ color: color });
       const mesh = new THREE.Mesh(geom, mat);
       mesh.position.copy(pos);
+      mesh.name = name;
       const up = new THREE.Vector3(0, 1, 0);
       mesh.quaternion.setFromUnitVectors(up, dir.clone().normalize());
       return mesh;
     };
 
-    group.add(createArrowHead(xDir, 0xff3333, new THREE.Vector3(size, 0, 0)));
-    group.add(createArrowHead(yDir, 0x33ff33, new THREE.Vector3(0, size, 0)));
-    group.add(createArrowHead(zDir, 0x3333ff, new THREE.Vector3(0, 0, size)));
+    group.add(createArrowHead(xDir, 0xff3333, new THREE.Vector3(size, 0, 0), 'gimbal_X'));
+    group.add(createArrowHead(yDir, 0x33ff33, new THREE.Vector3(0, size, 0), 'gimbal_Y'));
+    group.add(createArrowHead(zDir, 0x3333ff, new THREE.Vector3(0, 0, size), 'gimbal_Z'));
 
     const xLabel = createTextSprite('X', '#ff3333', 5, false);
     xLabel.position.set(size + 4, 0, 0);
+    xLabel.name = 'gimbal_X';
     const yLabel = createTextSprite('Y', '#33ff33', 5, false);
     yLabel.position.set(0, size + 4, 0);
+    yLabel.name = 'gimbal_Y';
     const zLabel = createTextSprite('Z', '#3333ff', 5, false);
     zLabel.position.set(0, 0, size + 4);
+    zLabel.name = 'gimbal_Z';
 
     group.add(xLabel);
     group.add(yLabel);
@@ -1474,39 +1985,77 @@ const STLAnalyzer = (() => {
   function predictDefects() {
     if (!_geometry || !_flowDistances || _gatePositions.length === 0) return [];
     const positions = _geometry.attributes.position.array;
-    const defects = [];
+    const normals   = _geometry.attributes.normal.array;
+    const defects   = [];
 
-    // 가장 멀리 충진되는 정점들 = 에어 트랩 후보
-    const sortedVerts = [];
+    _geometry.computeBoundingBox();
+    const modelCenter = new THREE.Vector3();
+    _geometry.boundingBox.getCenter(modelCenter);
+
+    // ── 1. 에어 트랩: 미도달 영역 우선 탐지 ──
+    const unreachable = [];
     for (let i = 0; i < positions.length; i += 9) {
-      const d = _flowDistances[i/3];
-      if (d !== Infinity && d < 999999) {
-        sortedVerts.push({ pos: new THREE.Vector3(positions[i], positions[i+1], positions[i+2]), dist: d });
+      const d = _flowDistances[i / 3];
+      if (d === Infinity || d === undefined || d > 999999) {
+        unreachable.push({ pos: new THREE.Vector3(positions[i], positions[i+1], positions[i+2]) });
       }
     }
-    sortedVerts.sort((a, b) => b.dist - a.dist);
-
-    const furthest = [];
-    for (const v of sortedVerts) {
-      if (furthest.every(f => v.pos.distanceTo(f.pos) >= 25)) {
-        furthest.push(v);
-        if (furthest.length >= 2) break;
+    const airTrapClusters = [];
+    for (const v of unreachable) {
+      if (airTrapClusters.every(c => v.pos.distanceTo(c.pos) >= 15)) {
+        airTrapClusters.push(v);
+        if (airTrapClusters.length >= 2) break;
       }
     }
-    furthest.forEach(f => defects.push({ type: 'air_trap', pos: f.pos, dist: f.dist }));
+    airTrapClusters.forEach(v => defects.push({ type: 'air_trap', pos: v.pos, dist: Infinity }));
 
-    // 웰드라인: 모든 게이트의 중심과 에어 트랩 중간 지점
-    if (furthest.length > 0) {
+    // ── 2. 에어 트랩: 미도달 없으면 오목한 심층 충진 구간 탐지 ──
+    if (airTrapClusters.length === 0) {
+      const threshold = _maxFlowDistance * 0.72;
+      const candidates = [];
+      for (let i = 0; i < positions.length; i += 9) {
+        const d = _flowDistances[i / 3];
+        if (d !== undefined && d !== Infinity && d > threshold) {
+          const vPos = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
+          const nx = normals[i], ny = normals[i+1], nz = normals[i+2];
+          // 법선이 모델 중심 방향을 향하면 오목(포켓) 구간
+          const toCenter = modelCenter.clone().sub(vPos).normalize();
+          const concavity = toCenter.dot(new THREE.Vector3(nx, ny, nz));
+          if (concavity > 0.25) {
+            candidates.push({ pos: vPos, dist: d });
+          }
+        }
+      }
+      candidates.sort((a, b) => b.dist - a.dist);
+      const distinct = [];
+      for (const v of candidates) {
+        if (distinct.every(d => v.pos.distanceTo(d.pos) >= 15)) {
+          distinct.push(v);
+          if (distinct.length >= 2) break;
+        }
+      }
+      distinct.forEach(v => defects.push({ type: 'air_trap', pos: v.pos, dist: v.dist }));
+    }
+
+    // ── 3. 웰드라인: 게이트 2개 이상일 때만 ──
+    if (_gatePositions.length >= 2) {
       const gateCenter = new THREE.Vector3();
       _gatePositions.forEach(p => gateCenter.add(p));
       gateCenter.divideScalar(_gatePositions.length);
 
-      const midPoint = new THREE.Vector3().addVectors(gateCenter, furthest[0].pos).multiplyScalar(0.5);
-      let bestWeldVert = null, minDiff = Infinity;
+      // 게이트 중심 근방에서 가장 높은 유동 거리를 가진 점 = 유동 합류 경계
+      let bestWeldVert = null, minScore = Infinity;
       for (let i = 0; i < positions.length; i += 9) {
-        const vPos = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
-        const distToMid = vPos.distanceTo(midPoint);
-        if (distToMid < minDiff && distToMid > 4) { minDiff = distToMid; bestWeldVert = vPos; }
+        const d = _flowDistances[i / 3];
+        if (d !== undefined && d !== Infinity && d < 999999) {
+          const vPos = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
+          const distToCenter = vPos.distanceTo(gateCenter);
+          const score = distToCenter - d * 0.6;
+          if (score < minScore && distToCenter > 5) {
+            minScore = score;
+            bestWeldVert = vPos;
+          }
+        }
       }
       if (bestWeldVert) defects.push({ type: 'weld_line', pos: bestWeldVert });
     }
@@ -1551,77 +2100,152 @@ const STLAnalyzer = (() => {
     });
   }
 
+  /* Moldflow 표준 색상 스펙트럼: Blue→Cyan→Green→Yellow→Orange→Red
+     t=0 (게이트/최초충진) → t=1 (최후충진/미성형 위험) */
   function computeFlowColors(positions, distances, maxDist, animPct) {
     const colors = new Float32Array(positions.length);
     const targetDist = maxDist * animPct;
-    
-    // Scale flow limit relative to the model's bounding box diagonal
-    let baseLimit = _material === 'PP' ? 180 : _material === 'ABS' ? 120 : _material === 'POM' ? 140 : 90;
-    if (_geometry) {
-      _geometry.computeBoundingBox();
-      const s = new THREE.Vector3();
-      _geometry.boundingBox.getSize(s);
-      const diag = s.length();
-      const scaleFactor = Math.max(0.3, diag / 100);
-      baseLimit = baseLimit * scaleFactor;
-    }
-    const flowLimit = baseLimit;
-    
-    // Dynamic flowing wave/ripple from the gate
-    const waveFreq = 0.3; // Spatial frequency of wave
-    const waveSpeed = 35; // Speed of propagation
-    
-    // Base solid colors for materials when cooled
-    let coolR = 0.12, coolG = 0.15, coolB = 0.2;
-    if (_material === 'ABS') { coolR = 0.15; coolG = 0.17; coolB = 0.22; }
-    else if (_material === 'PC') { coolR = 0.1; coolG = 0.38; coolB = 0.48; }
-    else if (_material === 'PP') { coolR = 0.28; coolG = 0.26; coolB = 0.24; }
-    else if (_material === 'POM') { coolR = 0.12; coolG = 0.14; coolB = 0.25; }
-
-    const frontWidth = maxDist * 0.05; // Advancing flow front thickness
+    const frontWidth = Math.max(maxDist * 0.04, 0.5);
 
     for (let i = 0; i < positions.length; i += 3) {
-      const d = distances[i/3];
-      let r = 0.05, g = 0.08, b = 0.2; // Default background unfilled color
-      
-      if (d !== undefined && d !== Infinity && d <= targetDist) {
-        const age = targetDist - d; // how long it has been filled
-        const waveFactor = Math.sin(d * waveFreq - animPct * waveSpeed) * 0.08 + 0.92;
+      const d = distances[i / 3];
+      let r, g, b;
 
-        if (age < frontWidth) {
-          // Flow front: extremely hot glowing white-yellow
-          const t = age / frontWidth;
-          r = 1.0;
-          g = 0.95 + t * 0.05;
-          b = 0.6 + t * 0.3;
-        } else if (age < frontWidth * 3) {
-          // Melted zone (hot plastic): bright yellow to orange
-          const t = (age - frontWidth) / (frontWidth * 2);
-          r = 1.0;
-          g = 0.95 - t * 0.5; // yellow to orange
-          b = 0.3 - t * 0.3;
-        } else if (age < frontWidth * 6) {
-          // Warm flow: orange to deep red-purple
-          const t = (age - frontWidth * 3) / (frontWidth * 3);
-          r = 1.0 - t * 0.6;
-          g = 0.45 - t * 0.4;
-          b = 0.0 + t * 0.2;
-        } else {
-          // Cooled solid plastic with dynamic flowing waves
-          const t = Math.min(1.0, (age - frontWidth * 6) / (maxDist * 0.3));
-          // Fade from deep red-purple to the cool solid material color
-          r = (0.4 * (1 - t) + coolR * t) * waveFactor;
-          g = (0.05 * (1 - t) + coolG * t) * waveFactor;
-          b = (0.2 * (1 - t) + coolB * t) * waveFactor;
-        }
+      const filled = d !== undefined && d !== Infinity && d < 999999 && d <= targetDist;
+
+      if (!filled) {
+        // 미충진 영역: 짙은 네이비 (배경과 구분)
+        r = 0.04; g = 0.05; b = 0.14;
       } else {
-        // Unfilled region — mark short-shot risk if beyond material flow limit
-        if (maxDist > flowLimit && d !== undefined && d !== Infinity && d > flowLimit) {
-          r = 0.55; g = 0.02; b = 0.25; // short shot risk — dark magenta
+        // 충진 시간 비율: 0 = 게이트(파랑), 1 = 최후충진(빨강)
+        const t = maxDist > 0 ? Math.min(1.0, d / maxDist) : 0;
+
+        if (t < 0.2) {
+          // Blue → Cyan
+          const s = t / 0.2;
+          r = 0.0; g = s; b = 1.0;
+        } else if (t < 0.4) {
+          // Cyan → Green
+          const s = (t - 0.2) / 0.2;
+          r = 0.0; g = 1.0; b = 1.0 - s;
+        } else if (t < 0.6) {
+          // Green → Yellow
+          const s = (t - 0.4) / 0.2;
+          r = s; g = 1.0; b = 0.0;
+        } else if (t < 0.8) {
+          // Yellow → Orange
+          const s = (t - 0.6) / 0.2;
+          r = 1.0; g = 1.0 - s * 0.5; b = 0.0;
+        } else {
+          // Orange → Red
+          const s = (t - 0.8) / 0.2;
+          r = 1.0; g = 0.5 - s * 0.5; b = 0.0;
+        }
+
+        // 유동 전면(Flow Front) 발광 효과: 하얀 빛
+        const distToFront = targetDist - d;
+        if (distToFront < frontWidth && animPct > 0.005 && animPct < 0.995) {
+          const glow = 1.0 - distToFront / frontWidth;
+          r = r + (1.0 - r) * glow * 0.88;
+          g = g + (1.0 - g) * glow * 0.88;
+          b = b + (1.0 - b) * glow * 0.88;
         }
       }
-      
-      colors[i] = r; colors[i+1] = g; colors[i+2] = b;
+
+      colors[i] = r; colors[i + 1] = g; colors[i + 2] = b;
+    }
+    return colors;
+  }
+
+  /* 수축 위험 예측: 대향 법선 간의 거리 = 벽 두께 추정 → 소재 수축률 가중 */
+  function computeShrinkageColors(positions, normals) {
+    const colors = new Float32Array(positions.length);
+    const mat = MATERIAL_DB[_material] || MATERIAL_DB.ABS;
+
+    _geometry.computeBoundingBox();
+    const geoSize = new THREE.Vector3();
+    _geometry.boundingBox.getSize(geoSize);
+    const diag = geoSize.length();
+
+    // 공간 해시 그리드 구성
+    const cellSize = Math.max(diag * 0.05, 0.1);
+    const grid = {};
+    for (let i = 0; i < positions.length; i += 3) {
+      const cx = Math.floor(positions[i]     / cellSize);
+      const cy = Math.floor(positions[i + 1] / cellSize);
+      const cz = Math.floor(positions[i + 2] / cellSize);
+      const key = `${cx},${cy},${cz}`;
+      if (!grid[key]) grid[key] = [];
+      grid[key].push(i);
+    }
+
+    const vertexThickness = new Float32Array(positions.length / 3);
+
+    for (let i = 0; i < positions.length; i += 3) {
+      const vx = positions[i], vy = positions[i + 1], vz = positions[i + 2];
+      const nx = normals[i],   ny = normals[i + 1],   nz = normals[i + 2];
+      const cx = Math.floor(vx / cellSize);
+      const cy = Math.floor(vy / cellSize);
+      const cz = Math.floor(vz / cellSize);
+
+      let minDist = Infinity;
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dz = -2; dz <= 2; dz++) {
+            const key = `${cx+dx},${cy+dy},${cz+dz}`;
+            const verts = grid[key];
+            if (!verts) continue;
+            for (const j of verts) {
+              if (j === i) continue;
+              const ox = positions[j], oy = positions[j + 1], oz = positions[j + 2];
+              const onx = normals[j], ony = normals[j + 1], onz = normals[j + 2];
+              // 대향 법선: 내부 양측 벽면 탐지
+              const dotN = nx * onx + ny * ony + nz * onz;
+              if (dotN < -0.45) {
+                const dist = Math.sqrt((vx-ox)**2 + (vy-oy)**2 + (vz-oz)**2);
+                if (dist > 0.02 && dist < minDist) minDist = dist;
+              }
+            }
+          }
+        }
+      }
+      vertexThickness[i / 3] = minDist === Infinity ? 0 : minDist;
+    }
+
+    // 최대 두께 정규화
+    let maxThick = 0;
+    for (let i = 0; i < vertexThickness.length; i++) {
+      if (vertexThickness[i] > maxThick) maxThick = vertexThickness[i];
+    }
+    if (maxThick < 0.001) maxThick = 1;
+
+    // 소재 수축률 가중치 (ABS 0.5% 기준)
+    const shrinkWeight = Math.min(3.0, mat.shrink / 0.005);
+
+    for (let i = 0; i < positions.length; i += 3) {
+      const thickness = vertexThickness[i / 3];
+      let r, g, b;
+
+      if (thickness < 0.01) {
+        // 대향면 없음 = 외부 표면, 낮은 위험 (녹색)
+        r = 0.0; g = 0.72; b = 0.3;
+      } else {
+        const t = Math.min(1.0, (thickness / maxThick) * shrinkWeight);
+        if (t < 0.33) {
+          // Green (낮은 수축 위험)
+          const s = t / 0.33;
+          r = s * 0.4; g = 0.85; b = 0.0;
+        } else if (t < 0.66) {
+          // Yellow (중간 위험)
+          const s = (t - 0.33) / 0.33;
+          r = 0.4 + s * 0.6; g = 0.85 - s * 0.25; b = 0.0;
+        } else {
+          // Red (수축 위험 높음)
+          const s = (t - 0.66) / 0.34;
+          r = 1.0; g = 0.6 - s * 0.6; b = 0.0;
+        }
+      }
+      colors[i] = r; colors[i + 1] = g; colors[i + 2] = b;
     }
     return colors;
   }
@@ -1730,6 +2354,13 @@ const STLAnalyzer = (() => {
 
   function toggleFlowOverlay(active) {
     _flowOverlayActive = active;
+    if (active) _shrinkageOverlayActive = false;
+    recolorGeometry();
+  }
+
+  function toggleShrinkageOverlay(active) {
+    _shrinkageOverlayActive = active;
+    if (active) _flowOverlayActive = false;
     recolorGeometry();
   }
 
@@ -1783,6 +2414,7 @@ const STLAnalyzer = (() => {
   /* ──────────────────────────────────────
      PUBLIC API
   ────────────────────────────────────── */
-  return { parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights };
+  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights };
+
 
 })();
