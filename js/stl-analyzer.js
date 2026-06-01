@@ -221,8 +221,8 @@ const STLAnalyzer = (() => {
     const W = container.clientWidth, H = container.clientHeight;
 
     _scene = new THREE.Scene();
-    _scene.background = new THREE.Color(0x080c18);
-    _scene.fog = new THREE.FogExp2(0x080c18, 0.003);
+    _scene.background = new THREE.Color(0xffffff); // Clean white background for visibility
+    _scene.fog = new THREE.FogExp2(0xffffff, 0.002);
 
     _camera = new THREE.PerspectiveCamera(45, W/H, 0.01, 10000);
     _camera.position.set(0, 0, 200);
@@ -234,21 +234,21 @@ const STLAnalyzer = (() => {
     container.appendChild(_renderer.domElement);
 
     // Lights
-    const ambient = new THREE.AmbientLight(0x334466, 0.6);
+    const ambient = new THREE.AmbientLight(0x555555, 0.8);
     _scene.add(ambient);
-    const dir1 = new THREE.DirectionalLight(0xffffff, 0.9);
+    const dir1 = new THREE.DirectionalLight(0xffffff, 0.8);
     dir1.position.set(1, 2, 3);
     _scene.add(dir1);
-    const dir2 = new THREE.DirectionalLight(0x004488, 0.4);
+    const dir2 = new THREE.DirectionalLight(0x99bbee, 0.5);
     dir2.position.set(-2, -1, -1);
     _scene.add(dir2);
     // Rim light
-    const rim = new THREE.PointLight(0x00d4ff, 0.5, 5000);
+    const rim = new THREE.PointLight(0x00d4ff, 0.3, 5000);
     rim.position.set(-200, 200, -200);
     _scene.add(rim);
 
-    // Grid
-    const grid = new THREE.GridHelper(500, 30, 0x112244, 0x0a1a2e);
+    // Grid - adjusted to clean light gray for white background
+    const grid = new THREE.GridHelper(500, 30, 0xaaaaaa, 0xdddddd);
     _scene.add(grid);
 
     // Controls
@@ -354,6 +354,19 @@ const STLAnalyzer = (() => {
     }
 
     _mesh = new THREE.Mesh(_geometry, mat);
+
+    // 메시 와이어프레임 외곽선 오버레이 추가 (신뢰감 부여 및 CAD 감성 극대화)
+    const wireframeGeo = new THREE.WireframeGeometry(_geometry);
+    const wireframeMat = new THREE.LineBasicMaterial({
+      color: 0x3d4b66, // 깨끗한 네이비 그레이 톤의 얇은 와이어프레임 선
+      transparent: true,
+      opacity: 0.16,
+      depthWrite: false
+    });
+    const wireframe = new THREE.LineSegments(wireframeGeo, wireframeMat);
+    wireframe.name = 'mesh_wireframe_overlay';
+    _mesh.add(wireframe);
+
     _mesh.targetQuaternion = new THREE.Quaternion();
     setPullAxis(_pullAxis);
     _mesh.quaternion.copy(_mesh.targetQuaternion);
@@ -526,11 +539,26 @@ const STLAnalyzer = (() => {
       const sign = (centerOffset > 0) ? 1 : -1;
       const originVal = rayOrigin[axisKey];
 
+      // Define perpendicular axes for fast 2D AABB filtering
+      let axisP1, axisP2;
+      if (_pullAxis === 'X') { axisP1 = 'y'; axisP2 = 'z'; }
+      else if (_pullAxis === 'Y') { axisP1 = 'x'; axisP2 = 'z'; }
+      else { axisP1 = 'x'; axisP2 = 'y'; }
+      const rx = rayOrigin[axisP1];
+      const ry = rayOrigin[axisP2];
+
       for (let t = 0; t < triCount; t++) {
         const tri = triangles[t];
 
         // 자기 자신 및 직전/직후 인접 삼각형 무시
         if (Math.abs(tri.idx - cand.idx) < 9) continue;
+
+        // 2D bounding box check in the plane perpendicular to pull axis
+        const minP1 = Math.min(tri.v0[axisP1], tri.v1[axisP1], tri.v2[axisP1]);
+        const maxP1 = Math.max(tri.v0[axisP1], tri.v1[axisP1], tri.v2[axisP1]);
+        const minP2 = Math.min(tri.v0[axisP2], tri.v1[axisP2], tri.v2[axisP2]);
+        const maxP2 = Math.max(tri.v0[axisP2], tri.v1[axisP2], tri.v2[axisP2]);
+        if (rx < minP1 - 0.2 || rx > maxP1 + 0.2 || ry < minP2 - 0.2 || ry > maxP2 + 0.2) continue;
 
         // 탈형 경로 반대쪽에 위치한 삼각형 필터링
         if (sign > 0) {
@@ -568,11 +596,25 @@ const STLAnalyzer = (() => {
           const hOriginVal = rayOrigin[hAxisKey];
           
           let isHBlocked = false;
+
+          let hAxisP1, hAxisP2;
+          if (hAxisKey === 'x') { hAxisP1 = 'y'; hAxisP2 = 'z'; }
+          else if (hAxisKey === 'y') { hAxisP1 = 'x'; hAxisP2 = 'z'; }
+          else { hAxisP1 = 'x'; hAxisP2 = 'y'; }
+          const hrx = rayOrigin[hAxisP1];
+          const hry = rayOrigin[hAxisP2];
           
           for (let t = 0; t < triCount; t++) {
             const tri = triangles[t];
             if (Math.abs(tri.idx - cand.idx) < 9) continue;
             
+            // 2D bounding box check in the plane perpendicular to slide direction
+            const minHP1 = Math.min(tri.v0[hAxisP1], tri.v1[hAxisP1], tri.v2[hAxisP1]);
+            const maxHP1 = Math.max(tri.v0[hAxisP1], tri.v1[hAxisP1], tri.v2[hAxisP1]);
+            const minHP2 = Math.min(tri.v0[hAxisP2], tri.v1[hAxisP2], tri.v2[hAxisP2]);
+            const maxHP2 = Math.max(tri.v0[hAxisP2], tri.v1[hAxisP2], tri.v2[hAxisP2]);
+            if (hrx < minHP1 - 0.2 || hrx > maxHP1 + 0.2 || hry < minHP2 - 0.2 || hry > maxHP2 + 0.2) continue;
+
             // 수평 경로 반대쪽 필터링
             if (isHPositive) {
               if (tri.centroid[hAxisKey] < hOriginVal - 0.1) continue;
@@ -820,6 +862,24 @@ const STLAnalyzer = (() => {
     const maxDim = Math.max(dx,dy,dz);
     const thicknessRatio = minDim / maxDim;
 
+    // 메쉬의 삼각형 요소를 순회하여 정밀 표면적 계산 (Heron / Cross Product)
+    let totalArea = 0;
+    const vA = new THREE.Vector3();
+    const vB = new THREE.Vector3();
+    const vC = new THREE.Vector3();
+    const edge1 = new THREE.Vector3();
+    const edge2 = new THREE.Vector3();
+    const cross = new THREE.Vector3();
+    for (let i = 0; i < pos.length; i += 9) {
+      vA.set(pos[i],     pos[i+1], pos[i+2]);
+      vB.set(pos[i+3],   pos[i+4], pos[i+5]);
+      vC.set(pos[i+6],   pos[i+7], pos[i+8]);
+      edge1.subVectors(vB, vA);
+      edge2.subVectors(vC, vA);
+      cross.crossVectors(edge1, edge2);
+      totalArea += cross.length() * 0.5;
+    }
+
     const centerX = minX + dx/2;
     const centerY = minY + dy/2;
     const centerZ = minZ + dz/2;
@@ -927,6 +987,29 @@ const STLAnalyzer = (() => {
       level: undercutPct > 15 ? 'warning' : 'info',
       title: '웰드라인 예측',
       desc: `복잡도 기반 예측: 언더컷 비율 ${undercutPct.toFixed(0)}% → 웰드라인 발생 가능성 ${undercutPct > 20 ? '높음 🔴' : undercutPct > 8 ? '중간 🟡' : '낮음 🟢'}.`,
+    });
+
+    // 사이드 게이트(Side Gate) 치수 설계 규칙 접목
+    const nCoeff = (matKey === 'FORTRON') ? 0.8 : 0.7; // 수지상수 (FORTRON/PA: 0.8, PC/ABS/POM/PP: 0.7)
+    const gateD = minDim * nCoeff;
+    const gateW = (nCoeff * Math.sqrt(totalArea)) / 30;
+    
+    issues.push({
+      level: 'ok',
+      title: `권장 사이드 게이트(Side Gate) 설계 치수`,
+      desc: `두께 ${minDim.toFixed(1)}mm 및 표면적 ${totalArea.toFixed(0)}㎟ 기준 (수지상수: ${nCoeff}): 권장 게이트 깊이(d) = ${gateD.toFixed(2)}mm, 권장 폭(W) = ${gateW.toFixed(2)}mm.`
+    });
+
+    // 수지별 적정 가스 벤트(Gas Vent) 틈새 규격 가이드 접목
+    let ventMin = 0.02, ventMax = 0.03, burrLimit = 0.04;
+    if (matKey === 'FORTRON') { ventMin = 0.010; ventMax = 0.015; burrLimit = 0.02; }
+    else if (matKey === 'PC') { ventMin = 0.030; ventMax = 0.040; burrLimit = 0.05; }
+    else if (matKey === 'PP' || matKey === 'POM') { ventMin = 0.010; ventMax = 0.020; burrLimit = 0.03; }
+
+    issues.push({
+      level: 'info',
+      title: `${matKey} 권장 가스 벤트(Air Vent) 깊이`,
+      desc: `가스 배출 효율과 Burr 차단을 위한 최적 틈새: ${ventMin.toFixed(3)} ~ ${ventMax.toFixed(3)}mm (임계치 초과 ${burrLimit.toFixed(2)}mm 이상 시 Burr/Flash 우려).`
     });
 
     // Material-specific engineering guidelines
@@ -2114,8 +2197,8 @@ const STLAnalyzer = (() => {
       const filled = d !== undefined && d !== Infinity && d < 999999 && d <= targetDist;
 
       if (!filled) {
-        // 미충진 영역: 짙은 네이비 (배경과 구분)
-        r = 0.04; g = 0.05; b = 0.14;
+        // 미충진 영역: 밝은 반투명 느낌의 회색 (Moldflow 스타일 캐비티 표현)
+        r = 0.93; g = 0.93; b = 0.95;
       } else {
         // 충진 시간 비율: 0 = 게이트(파랑), 1 = 최후충진(빨강)
         const t = maxDist > 0 ? Math.min(1.0, d / maxDist) : 0;

@@ -566,7 +566,7 @@ body {
   --header-h:        48px; /* Slim compact header */
   --panel-w:         260px; /* Model tree width */
   --prop-w:          290px; /* Properties panel width */
-  --console-h:       60px;  /* Bottom console height */
+  --console-h:       0px;   /* Bottom console hidden */
 }
 
 /* Override App Main placement for tall Ribbon */
@@ -979,16 +979,16 @@ body {
   gap: 12px;
 }
 
-/* Bottom Message Console */
+/* Bottom Message Console - Hidden for spacious viewport */
 .cad-message-console {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  height: var(--console-h, 60px);
+  height: var(--console-h, 0px);
   background: var(--creo-bg-dark);
   border-top: 2px solid var(--creo-border-cad);
-  display: flex;
+  display: none !important; /* Completely hide console */
   flex-direction: column;
   z-index: 10;
   transition: height 0.25s ease;

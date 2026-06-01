@@ -20,6 +20,7 @@ class DimaTrayApp : ApplicationContext {
     static HttpListener _listener;
     static string       _baseDir;
     static int          _port;
+    static Mutex        _mutex;
     NotifyIcon          _tray;
 
     static readonly Dictionary<string,string> MimeMap =
@@ -37,23 +38,100 @@ class DimaTrayApp : ApplicationContext {
 
     [STAThread]
     static void Main() {
-        _baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        _port    = FindFreePort(8899);
+        string logFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dima_error.log");
+        try {
+            // --- Single Instance Lock ---
+            bool createdNew;
+            _mutex = new Mutex(true, "Local\\DIMA_SingleInstance_Mutex", out createdNew);
+            if (!createdNew) {
+                // Another DIMA is already running – just open browser to it and exit
+                // Try to read port file
+                string portFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ".dima_port");
+                if (File.Exists(portFile)) {
+                    try {
+                        int existingPort = int.Parse(File.ReadAllText(portFile).Trim());
+                        OpenBrowserStatic(existingPort);
+                        return;
+                    } catch { }
+                }
+                // Fallback: scan ports
+                for (int p = 8899; p < 8949; p++) {
+                    try {
+                        var req = (HttpWebRequest)WebRequest.Create("http://localhost:" + p + "/");
+                        req.Timeout = 500;
+                        var resp = (HttpWebResponse)req.GetResponse();
+                        if (resp.StatusCode == HttpStatusCode.OK) {
+                            resp.Close();
+                            OpenBrowserStatic(p);
+                            return;
+                        }
+                        resp.Close();
+                    } catch { }
+                }
+                // Could not find existing instance – show message
+                MessageBox.Show("DIMA가 이미 실행 중입니다.\n시스템 트레이에서 DIMA 아이콘을 확인해 주세요.",
+                                "DIMA", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
 
-        _listener = new HttpListener();
-        _listener.Prefixes.Add("http://localhost:" + _port + "/");
-        try { _listener.Start(); }
-        catch (Exception ex) {
-            MessageBox.Show("Failed to start HTTP server.\n" + ex.Message,
-                            "DIMA Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return;
+            _baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            _port    = FindFreePort(8899);
+
+            _listener = new HttpListener();
+            _listener.Prefixes.Add("http://localhost:" + _port + "/");
+            try { _listener.Start(); }
+            catch (Exception ex) {
+                MessageBox.Show("HTTP 서버를 시작할 수 없습니다.\n" + ex.Message,
+                                "DIMA 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                ReleaseMutex();
+                return;
+            }
+
+            // Write port file so other instances can find us
+            try {
+                File.WriteAllText(Path.Combine(_baseDir, ".dima_port"), _port.ToString());
+            } catch { }
+
+            new Thread(ServeLoop) { IsBackground = true, Name = "DIMA-HTTP" }.Start();
+
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new DimaTrayApp());
+
+            // Cleanup on exit
+            ReleaseMutex();
+            try { File.Delete(Path.Combine(_baseDir, ".dima_port")); } catch { }
         }
+        catch (Exception ex) {
+            try { File.WriteAllText(logFile, DateTime.Now + "\n" + ex.ToString()); } catch { }
+            MessageBox.Show("DIMA 실행 오류:\n" + ex.Message, "DIMA Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
 
-        new Thread(ServeLoop) { IsBackground = true, Name = "DIMA-HTTP" }.Start();
+    static void ReleaseMutex() {
+        try { _mutex.ReleaseMutex(); } catch { }
+        try { _mutex.Dispose(); } catch { }
+    }
 
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-        Application.Run(new DimaTrayApp());
+    static void OpenBrowserStatic(int port) {
+        try {
+            string edgePath = @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+            if (File.Exists(edgePath)) {
+                Process.Start(edgePath, "--app=http://localhost:" + port);
+                return;
+            }
+            string chromePath = @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+            if (!File.Exists(chromePath))
+                chromePath = @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe";
+            if (File.Exists(chromePath)) {
+                Process.Start(chromePath, "--app=http://localhost:" + port);
+                return;
+            }
+            Process.Start(new ProcessStartInfo {
+                FileName        = "http://localhost:" + port,
+                UseShellExecute = true
+            });
+        } catch { }
     }
 
     DimaTrayApp() {
@@ -152,6 +230,8 @@ class DimaTrayApp : ApplicationContext {
     void Quit() {
         _tray.Visible = false;
         try { _listener.Stop(); } catch { }
+        try { File.Delete(Path.Combine(_baseDir, ".dima_port")); } catch { }
+        ReleaseMutex();
         ExitThread();
     }
 

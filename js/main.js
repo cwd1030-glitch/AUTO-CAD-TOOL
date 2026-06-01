@@ -829,8 +829,9 @@ $('btn-set-gate').addEventListener('click', function() {
 // Flow Simulation Animation Controls
 let flowAnimPct = 0;
 let flowPlaying = false;
-let flowAnimTimer = null;
+let flowAnimFrame = null;
 let flowSpeedMultiplier = 1.0;
+let lastAnimTime = 0;
 
 function resetFlowAnimation() {
   stopFlowAnimation();
@@ -846,25 +847,38 @@ function startFlowAnimation() {
   $('btn-play-flow').style.display = 'none';
   $('btn-pause-flow').style.display = 'flex';
   
-  flowAnimTimer = setInterval(() => {
-    flowAnimPct += 2 * flowSpeedMultiplier;
+  lastAnimTime = performance.now();
+  
+  function animLoop(timestamp) {
+    if (!flowPlaying) return;
+    
+    const delta = timestamp - lastAnimTime;
+    lastAnimTime = timestamp;
+    
+    // 2.0초 전체 주기를 60fps 이상으로 부드럽게 보간 (delta * 0.05 가 1배속 기준)
+    flowAnimPct += (delta * 0.05) * flowSpeedMultiplier;
     if (flowAnimPct > 100) {
       flowAnimPct = 0;
     }
+    
     const val = Math.floor(flowAnimPct);
     $('flow-slider').value = val;
     $('flow-time-display').textContent = `${(val * 2.0 / 100).toFixed(1)}s / 2.0s`;
     STLAnalyzer.setFlowAnimationTime(val / 100);
-  }, 50);
+    
+    flowAnimFrame = requestAnimationFrame(animLoop);
+  }
+  
+  flowAnimFrame = requestAnimationFrame(animLoop);
 }
 
 function stopFlowAnimation() {
   flowPlaying = false;
   $('btn-play-flow').style.display = 'flex';
   $('btn-pause-flow').style.display = 'none';
-  if (flowAnimTimer) {
-    clearInterval(flowAnimTimer);
-    flowAnimTimer = null;
+  if (flowAnimFrame) {
+    cancelAnimationFrame(flowAnimFrame);
+    flowAnimFrame = null;
   }
 }
 
@@ -1111,21 +1125,117 @@ function animateScore(numId, ringId, gradeId, score) {
 function renderIssues(listId, issues) {
   const container = $(listId);
   container.innerHTML = '';
-  issues.forEach((issue, idx) => {
-    const div = document.createElement('div');
-    div.className = `issue-item ${issue.level}`;
-    div.style.animationDelay = `${idx * 60}ms`;
 
-    const badgeClass = { error:'badge-error', warning:'badge-warning', info:'badge-info', ok:'badge-ok' }[issue.level] || 'badge-info';
-    const badgeText  = { error:'ERROR', warning:'WARN', info:'INFO', ok:'OK' }[issue.level] || 'INFO';
+  if (listId === 'issues-list-3d') {
+    // Group 3D issues by category
+    const groups = {
+      molding:   { title: '📦 사출 성형성 분석', items: [], color: 'var(--cyan)' },
+      gate:      { title: '🎯 게이트 및 가스 벤트', items: [], color: 'var(--yellow)' },
+      thickness: { title: '📐 살두께 비율 검증', items: [], color: 'var(--green)' },
+      tip:       { title: '💡 생산성 가이드 & 팁', items: [], color: 'var(--orange)' }
+    };
 
-    div.innerHTML = `
-      <div class="issue-title">
-        <span class="issue-badge ${badgeClass}">${badgeText}</span>${issue.title}
-      </div>
-      <div>${issue.desc}</div>`;
-    container.appendChild(div);
-  });
+    issues.forEach(issue => {
+      let title = issue.title.toUpperCase();
+      let desc  = issue.desc.toUpperCase();
+      let cat = 'tip';
+
+      if (title.includes('언더컷') || title.includes('구배') || title.includes('수축') || title.includes('웰드라인') || title.includes('미성형') || title.includes('에어 트랩') || title.includes('충진')) {
+        cat = 'molding';
+      } else if (title.includes('게이트') || title.includes('벤트') || title.includes('주입구') || title.includes('공차') || title.includes('조도')) {
+        cat = 'gate';
+      } else if (title.includes('두께') || title.includes('살두께')) {
+        cat = 'thickness';
+      } else {
+        cat = 'tip';
+      }
+      groups[cat].items.push(issue);
+    });
+
+    Object.keys(groups).forEach(key => {
+      const group = groups[key];
+      if (group.items.length === 0) return;
+
+      const groupDiv = document.createElement('div');
+      groupDiv.className = 'issue-group-container';
+      groupDiv.style.marginBottom = '12px';
+
+      const header = document.createElement('div');
+      header.className = 'issue-group-header';
+      header.style.display = 'flex';
+      header.style.justifyContent = 'space-between';
+      header.style.alignItems = 'center';
+      header.style.padding = '8px 12px';
+      header.style.background = 'rgba(255,255,255,0.03)';
+      header.style.border = '1px solid var(--creo-border-cad)';
+      header.style.borderRadius = '6px';
+      header.style.cursor = 'pointer';
+      header.style.fontWeight = 'bold';
+      header.style.fontSize = '0.78rem';
+      header.style.color = group.color;
+      header.style.userSelect = 'none';
+
+      const content = document.createElement('div');
+      content.className = 'issue-group-content';
+      content.style.marginTop = '6px';
+      content.style.display = 'flex';
+      content.style.flexDirection = 'column';
+      content.style.gap = '6px';
+
+      header.innerHTML = `<span>${group.title} (${group.items.length})</span><span class="group-arrow">▼</span>`;
+
+      header.addEventListener('click', () => {
+        const arrow = header.querySelector('.group-arrow');
+        if (content.style.display === 'none') {
+          content.style.display = 'flex';
+          arrow.textContent = '▼';
+        } else {
+          content.style.display = 'none';
+          arrow.textContent = '▲';
+        }
+      });
+
+      group.items.forEach((issue, idx) => {
+        const div = document.createElement('div');
+        div.className = `issue-item ${issue.level}`;
+        div.style.animationDelay = `${idx * 40}ms`;
+        div.style.padding = '8px 10px';
+        div.style.fontSize = '0.74rem';
+
+        const badgeClass = { error:'badge-error', warning:'badge-warning', info:'badge-info', ok:'badge-ok' }[issue.level] || 'badge-info';
+        const badgeText  = { error:'ERROR', warning:'WARN', info:'INFO', ok:'OK' }[issue.level] || 'INFO';
+
+        div.innerHTML = `
+          <div class="issue-title" style="font-size:0.75rem; margin-bottom:4px;">
+            <span class="issue-badge ${badgeClass}" style="font-size:0.58rem; padding: 1px 5px;">${badgeText}</span>${issue.title}
+          </div>
+          <div style="color:var(--text-secondary); line-height:1.4;">${issue.desc}</div>`;
+        content.appendChild(div);
+      });
+
+      groupDiv.appendChild(header);
+      groupDiv.appendChild(content);
+      container.appendChild(groupDiv);
+    });
+
+  } else {
+    // Default flat rendering (for 2D)
+    issues.forEach((issue, idx) => {
+      const div = document.createElement('div');
+      div.className = `issue-item ${issue.level}`;
+      div.style.animationDelay = `${idx * 60}ms`;
+
+      const badgeClass = { error:'badge-error', warning:'badge-warning', info:'badge-info', ok:'badge-ok' }[issue.level] || 'badge-info';
+      const badgeText  = { error:'ERROR', warning:'WARN', info:'INFO', ok:'OK' }[issue.level] || 'INFO';
+
+      div.innerHTML = `
+        <div class="issue-title">
+          <span class="issue-badge ${badgeClass}">${badgeText}</span>${issue.title}
+        </div>
+        <div>${issue.desc}</div>`;
+      container.appendChild(div);
+    });
+  }
 }
 
 /* ══════════════════════════════════════
