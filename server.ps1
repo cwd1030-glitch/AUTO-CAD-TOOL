@@ -32,6 +32,10 @@ while ($listener.IsListening) {
         # SharedArrayBuffer (WASM 멀티스레드) 활성화에 필요한 보안 헤더
         $resp.Headers.Add('Cross-Origin-Opener-Policy', 'same-origin')
         $resp.Headers.Add('Cross-Origin-Embedder-Policy', 'require-corp')
+        # JS/CSS 파일은 캐시 방지 (개발 중 수정사항 즉시 반영)
+        if ($ext -eq '.js' -or $ext -eq '.css' -or $ext -eq '.html') {
+            $resp.Headers.Add('Cache-Control', 'no-cache, no-store, must-revalidate')
+        }
         $resp.OutputStream.Write($bytes, 0, $bytes.Length)
     } else {
         $resp.StatusCode = 404

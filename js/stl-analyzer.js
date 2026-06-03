@@ -990,8 +990,15 @@ const STLAnalyzer = (() => {
     }
     const partingH = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
 
-    // 물리적 간섭(Ray-casting) 기반 진짜 언더컷 맵 도출
-    const { isUndercutMap } = getPhysicalUndercuts(positions, normals, partingH, _pullAxis, _flipAxis);
+    // analyze()가 먼저 실행되면 _undercutCache에 결과가 있음.
+    // computeDraftColors는 동기 함수이므로 async인 getPhysicalUndercuts를 await할 수 없어 캐시를 직접 사용.
+    // 캐시가 없으면 구배각만으로 색상 표시(언더컷 표시 생략).
+    const isUndercutMap = (_undercutCache &&
+      _undercutCache.pullAxis === _pullAxis &&
+      _undercutCache.flipAxis === _flipAxis &&
+      _undercutCache.isUndercutMap)
+      ? _undercutCache.isUndercutMap
+      : null;
 
     for (let i = 0; i < normals.length; i += 3) {
       const nx = normals[i], ny = normals[i+1], nz = normals[i+2];
@@ -1006,7 +1013,7 @@ const STLAnalyzer = (() => {
         dotVal = ny;
         centerOffset = vy - partingH;
       }
-      
+
       if (_flipAxis) {
         dotVal = -dotVal;
         centerOffset = -centerOffset;
@@ -1017,7 +1024,7 @@ const STLAnalyzer = (() => {
 
       // 정점 인덱스로부터 해당 삼각형의 인덱스(i/9)를 구함
       const triIdx = Math.floor(i / 9);
-      const isPhysicalUndercut = isUndercutMap[triIdx] === 1;
+      const isPhysicalUndercut = isUndercutMap ? isUndercutMap[triIdx] === 1 : false;
 
       if (isPhysicalUndercut) {
         // ACTUAL UNDERCUT (RED)
