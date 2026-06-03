@@ -13,7 +13,7 @@ while ($listener.IsListening) {
     if ($url -eq '/') { $url = '/index.html' }
 
     $safePath = $url -replace '/', '\'
-    $file = "c:\Users\mecha\PROJECT\AUTO_CAD_TOOL" + $safePath
+    $file = Join-Path $PSScriptRoot $safePath
 
     if (Test-Path $file -PathType Leaf) {
         $bytes = [System.IO.File]::ReadAllBytes($file)
@@ -22,12 +22,16 @@ while ($listener.IsListening) {
             '.html' { 'text/html; charset=utf-8' }
             '.css'  { 'text/css' }
             '.js'   { 'application/javascript' }
+            '.wasm' { 'application/wasm' }
             '.png'  { 'image/png' }
             '.ico'  { 'image/x-icon' }
             default { 'application/octet-stream' }
         }
         $resp.ContentType   = $ct
         $resp.ContentLength64 = $bytes.Length
+        # SharedArrayBuffer (WASM 멀티스레드) 활성화에 필요한 보안 헤더
+        $resp.Headers.Add('Cross-Origin-Opener-Policy', 'same-origin')
+        $resp.Headers.Add('Cross-Origin-Embedder-Policy', 'require-corp')
         $resp.OutputStream.Write($bytes, 0, $bytes.Length)
     } else {
         $resp.StatusCode = 404
