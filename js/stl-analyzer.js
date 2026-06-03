@@ -39,6 +39,9 @@ const STLAnalyzer = (() => {
   let _flowAnimationTime = 0.0;
   let _adjacencyGraph = null;
 
+  // Undercut detection cache
+  let _undercutCache = null;
+
   let _meltTemp = 230;
   let _moldTemp = 50;
   let _flowRate = 50;
@@ -106,31 +109,42 @@ const STLAnalyzer = (() => {
     const normals = [];
 
     result.meshes.forEach(meshData => {
+      // 일부 STP 파트는 position 데이터 없이 반환될 수 있음 (어노테이션, 축 등)
+      if (!meshData || !meshData.attributes || !meshData.attributes.position) return;
       const posArr = meshData.attributes.position.array;
-      const normArr = meshData.attributes.normal ? meshData.attributes.normal.array : null;
-      const indexArr = meshData.index ? meshData.index.array : null;
+      if (!posArr || posArr.length === 0) return;
+
+      const normArr = (meshData.attributes.normal && meshData.attributes.normal.array)
+        ? meshData.attributes.normal.array : null;
+      const indexArr = (meshData.index && meshData.index.array)
+        ? meshData.index.array : null;
 
       if (indexArr) {
         for (let i = 0; i < indexArr.length; i++) {
           const idx = indexArr[i];
+          if (idx * 3 + 2 >= posArr.length) continue; // 범위 초과 방지
           positions.push(posArr[idx * 3], posArr[idx * 3 + 1], posArr[idx * 3 + 2]);
-          if (normArr) {
+          if (normArr && idx * 3 + 2 < normArr.length) {
             normals.push(normArr[idx * 3], normArr[idx * 3 + 1], normArr[idx * 3 + 2]);
           } else {
             normals.push(0, 0, 0);
           }
         }
       } else {
-        for (let i = 0; i < posArr.length; i++) {
-          positions.push(posArr[i]);
-          if (normArr) {
-            normals.push(normArr[i]);
+        for (let i = 0; i + 2 < posArr.length; i += 3) {
+          positions.push(posArr[i], posArr[i + 1], posArr[i + 2]);
+          if (normArr && i + 2 < normArr.length) {
+            normals.push(normArr[i], normArr[i + 1], normArr[i + 2]);
           } else {
-            normals.push(0);
+            normals.push(0, 0, 0);
           }
         }
       }
     });
+
+    if (positions.length === 0) {
+      throw new Error('STEP 파일에서 정점 데이터를 추출하지 못했습니다. 파일 형식이 지원되지 않거나 모델이 비어있습니다.');
+    }
 
     const flatPositions = new Float32Array(positions);
     let flatNormals = new Float32Array(normals);
@@ -141,7 +155,7 @@ const STLAnalyzer = (() => {
       tempGeo.setAttribute('normal', new THREE.BufferAttribute(flatNormals, 3));
     } else {
       tempGeo.computeVertexNormals();
-      flatNormals = tempGeo.attributes.normal.array;
+      flatNormals = tempGeo.attributes.normal ? tempGeo.attributes.normal.array : new Float32Array(flatPositions.length);
     }
 
     const text = new TextDecoder().decode(uint8Array.slice(0, 50000));
@@ -573,6 +587,7 @@ const STLAnalyzer = (() => {
   function loadGeometry(stlData) {
     if (_mesh) { _scene.remove(_mesh); _geometry && _geometry.dispose(); }
     clearGate();
+    _undercutCache = null; // Clear cache on new model load
 
     _geometry = new THREE.BufferGeometry();
     _geometry.setAttribute('position', new THREE.BufferAttribute(stlData.positions, 3));
@@ -650,28 +665,34 @@ const STLAnalyzer = (() => {
     _scene.add(_mesh);
   }
 
-  // 3.1 Ray-Triangle Intersection (Moller-Trumbore Algorithm)
+  // 3.1 Ray-Triangle Intersection (Moller-Trumbore Algorithm - Highly Optimized with Static Cache)
+  const _edge1 = new THREE.Vector3();
+  const _edge2 = new THREE.Vector3();
+  const _h = new THREE.Vector3();
+  const _s = new THREE.Vector3();
+  const _q = new THREE.Vector3();
+
   function rayTriangleIntersect(orig, dir, v0, v1, v2) {
     const EPSILON = 0.000001;
-    const edge1 = new THREE.Vector3().subVectors(v1, v0);
-    const edge2 = new THREE.Vector3().subVectors(v2, v0);
-    const h = new THREE.Vector3().crossVectors(dir, edge2);
-    const a = edge1.dot(h);
+    _edge1.subVectors(v1, v0);
+    _edge2.subVectors(v2, v0);
+    _h.crossVectors(dir, _edge2);
+    const a = _edge1.dot(_h);
     
     if (a > -EPSILON && a < EPSILON) return null; // Parallel
     
     const f = 1.0 / a;
-    const s = new THREE.Vector3().subVectors(orig, v0);
-    const u = f * s.dot(h);
+    _s.subVectors(orig, v0);
+    const u = f * _s.dot(_h);
     
     if (u < 0.0 || u > 1.0) return null;
     
-    const q = new THREE.Vector3().crossVectors(s, edge1);
-    const v = f * dir.dot(q);
+    _q.crossVectors(_s, _edge1);
+    const v = f * dir.dot(_q);
     
     if (v < 0.0 || u + v > 1.0) return null;
     
-    const t = f * edge2.dot(q);
+    const t = f * _edge2.dot(_q);
     if (t > EPSILON) return t;
     return null;
   }
@@ -704,6 +725,18 @@ const STLAnalyzer = (() => {
 
   // 3.2.2 물리적 간섭 기반의 언더컷 판별 및 슬라이드/경사코어 방향 판별 함수
   async function getPhysicalUndercuts(pos, normals, partingH, pullAxis, flipAxis, onProgress) {
+    // 캐시 키 검사
+    if (_undercutCache && 
+        _undercutCache.partingH === partingH && 
+        _undercutCache.pullAxis === pullAxis && 
+        _undercutCache.flipAxis === flipAxis && 
+        _undercutCache.isUndercutMap.length === (pos.length / 9)) {
+      return { 
+        isUndercutMap: _undercutCache.isUndercutMap, 
+        slideDirections: _undercutCache.slideDirections 
+      };
+    }
+
     const triCount = pos.length / 9;
     const isUndercutMap = new Uint8Array(triCount);
     const slideDirections = new Array(triCount).fill(null);
@@ -730,7 +763,7 @@ const STLAnalyzer = (() => {
     const maxDim = maxVal - minVal;
     const minDistTolerance = Math.max(0.1, maxDim * 0.005); // 최소 0.1mm 오차 허용
 
-    // 1. 모든 삼각형 데이터 로딩 및 인덱싱
+    // 1. 모든 삼각형 데이터 로딩 및 인덱싱 (바운딩 박스 precompute 추가)
     const triangles = [];
     for (let i = 0; i < triCount; i++) {
       const idx = i * 9;
@@ -746,7 +779,14 @@ const STLAnalyzer = (() => {
       const nx = normals[idx], ny = normals[idx+1], nz = normals[idx+2];
       const normal = new THREE.Vector3(nx, ny, nz);
       
-      triangles.push({ v0, v1, v2, centroid, normal, idx });
+      const minX = Math.min(v0.x, v1.x, v2.x);
+      const maxX = Math.max(v0.x, v1.x, v2.x);
+      const minY = Math.min(v0.y, v1.y, v2.y);
+      const maxY = Math.max(v0.y, v1.y, v2.y);
+      const minZ = Math.min(v0.z, v1.z, v2.z);
+      const maxZ = Math.max(v0.z, v1.z, v2.z);
+
+      triangles.push({ v0, v1, v2, centroid, normal, idx, minX, maxX, minY, maxY, minZ, maxZ });
     }
 
     // 2. 1차 백드래프트 후보 선별
@@ -801,9 +841,23 @@ const STLAnalyzer = (() => {
 
       // Define perpendicular axes for fast 2D AABB filtering
       let axisP1, axisP2;
-      if (pullAxis === 'X') { axisP1 = 'y'; axisP2 = 'z'; }
-      else if (pullAxis === 'Y') { axisP1 = 'x'; axisP2 = 'z'; }
-      else { axisP1 = 'x'; axisP2 = 'y'; }
+      let minKeyP1, maxKeyP1, minKeyP2, maxKeyP2, minKeyAxis, maxKeyAxis;
+      if (pullAxis === 'X') {
+        axisP1 = 'y'; axisP2 = 'z';
+        minKeyP1 = 'minY'; maxKeyP1 = 'maxY';
+        minKeyP2 = 'minZ'; maxKeyP2 = 'maxZ';
+        minKeyAxis = 'minX'; maxKeyAxis = 'maxX';
+      } else if (pullAxis === 'Y') {
+        axisP1 = 'x'; axisP2 = 'z';
+        minKeyP1 = 'minX'; maxKeyP1 = 'maxX';
+        minKeyP2 = 'minZ'; maxKeyP2 = 'maxZ';
+        minKeyAxis = 'minY'; maxKeyAxis = 'maxY';
+      } else {
+        axisP1 = 'x'; axisP2 = 'y';
+        minKeyP1 = 'minX'; maxKeyP1 = 'maxX';
+        minKeyP2 = 'minY'; maxKeyP2 = 'maxY';
+        minKeyAxis = 'minZ'; maxKeyAxis = 'maxZ';
+      }
       const rx = rayOrigin[axisP1];
       const ry = rayOrigin[axisP2];
 
@@ -813,12 +867,8 @@ const STLAnalyzer = (() => {
         // 자기 자신 및 직전/직후 인접 삼각형 무시
         if (Math.abs(tri.idx - cand.idx) < 9) continue;
 
-        // 2D bounding box check in the plane perpendicular to pull axis
-        const minP1 = Math.min(tri.v0[axisP1], tri.v1[axisP1], tri.v2[axisP1]);
-        const maxP1 = Math.max(tri.v0[axisP1], tri.v1[axisP1], tri.v2[axisP1]);
-        const minP2 = Math.min(tri.v0[axisP2], tri.v1[axisP2], tri.v2[axisP2]);
-        const maxP2 = Math.max(tri.v0[axisP2], tri.v1[axisP2], tri.v2[axisP2]);
-        if (rx < minP1 - 0.2 || rx > maxP1 + 0.2 || ry < minP2 - 0.2 || ry > maxP2 + 0.2) continue;
+        // Pre-computed 2D bounding box check in the plane perpendicular to pull axis
+        if (rx < tri[minKeyP1] - 0.2 || rx > tri[maxKeyP1] + 0.2 || ry < tri[minKeyP2] - 0.2 || ry > tri[maxKeyP2] + 0.2) continue;
 
         // 탈형 경로 반대쪽에 위치한 삼각형 필터링
         if (sign > 0) {
@@ -828,10 +878,8 @@ const STLAnalyzer = (() => {
         }
 
         // Bounding Box 축방향 빠른 필터링
-        const tMin = Math.min(tri.v0[axisKey], tri.v1[axisKey], tri.v2[axisKey]);
-        const tMax = Math.max(tri.v0[axisKey], tri.v1[axisKey], tri.v2[axisKey]);
-        if (sign > 0 && tMax < originVal) continue;
-        if (sign < 0 && tMin > originVal) continue;
+        if (sign > 0 && tri[maxKeyAxis] < originVal) continue;
+        if (sign < 0 && tri[minKeyAxis] > originVal) continue;
 
         // Moller-Trumbore로 정밀 교차 판정
         const dist = rayTriangleIntersect(rayOrigin, rayDir, tri.v0, tri.v1, tri.v2);
@@ -858,9 +906,23 @@ const STLAnalyzer = (() => {
           let isHBlocked = false;
 
           let hAxisP1, hAxisP2;
-          if (hAxisKey === 'x') { hAxisP1 = 'y'; hAxisP2 = 'z'; }
-          else if (hAxisKey === 'y') { hAxisP1 = 'x'; hAxisP2 = 'z'; }
-          else { hAxisP1 = 'x'; hAxisP2 = 'y'; }
+          let hMinKeyP1, hMaxKeyP1, hMinKeyP2, hMaxKeyP2, hMinKeyAxis, hMaxKeyAxis;
+          if (hAxisKey === 'x') {
+            hAxisP1 = 'y'; hAxisP2 = 'z';
+            hMinKeyP1 = 'minY'; hMaxKeyP1 = 'maxY';
+            hMinKeyP2 = 'minZ'; hMaxKeyP2 = 'maxZ';
+            hMinKeyAxis = 'minX'; hMaxKeyAxis = 'maxX';
+          } else if (hAxisKey === 'y') {
+            hAxisP1 = 'x'; hAxisP2 = 'z';
+            hMinKeyP1 = 'minX'; hMaxKeyP1 = 'maxX';
+            hMinKeyP2 = 'minZ'; hMaxKeyP2 = 'maxZ';
+            hMinKeyAxis = 'minY'; hMaxKeyAxis = 'maxY';
+          } else {
+            hAxisP1 = 'x'; hAxisP2 = 'y';
+            hMinKeyP1 = 'minX'; hMaxKeyP1 = 'maxX';
+            hMinKeyP2 = 'minY'; hMaxKeyP2 = 'maxY';
+            hMinKeyAxis = 'minZ'; hMaxKeyAxis = 'maxZ';
+          }
           const hrx = rayOrigin[hAxisP1];
           const hry = rayOrigin[hAxisP2];
           
@@ -868,12 +930,8 @@ const STLAnalyzer = (() => {
             const tri = triangles[t];
             if (Math.abs(tri.idx - cand.idx) < 9) continue;
             
-            // 2D bounding box check in the plane perpendicular to slide direction
-            const minHP1 = Math.min(tri.v0[hAxisP1], tri.v1[hAxisP1], tri.v2[hAxisP1]);
-            const maxHP1 = Math.max(tri.v0[hAxisP1], tri.v1[hAxisP1], tri.v2[hAxisP1]);
-            const minHP2 = Math.min(tri.v0[hAxisP2], tri.v1[hAxisP2], tri.v2[hAxisP2]);
-            const maxHP2 = Math.max(tri.v0[hAxisP2], tri.v1[hAxisP2], tri.v2[hAxisP2]);
-            if (hrx < minHP1 - 0.2 || hrx > maxHP1 + 0.2 || hry < minHP2 - 0.2 || hry > maxHP2 + 0.2) continue;
+            // Pre-computed 2D bounding box check in the plane perpendicular to slide direction
+            if (hrx < tri[hMinKeyP1] - 0.2 || hrx > tri[hMaxKeyP1] + 0.2 || hry < tri[hMinKeyP2] - 0.2 || hry > tri[hMaxKeyP2] + 0.2) continue;
 
             // 수평 경로 반대쪽 필터링
             if (isHPositive) {
@@ -882,10 +940,8 @@ const STLAnalyzer = (() => {
               if (tri.centroid[hAxisKey] > hOriginVal + 0.1) continue;
             }
             
-            const tMin = Math.min(tri.v0[hAxisKey], tri.v1[hAxisKey], tri.v2[hAxisKey]);
-            const tMax = Math.max(tri.v0[hAxisKey], tri.v1[hAxisKey], tri.v2[hAxisKey]);
-            if (isHPositive && tMax < hOriginVal) continue;
-            if (!isHPositive && tMin > hOriginVal) continue;
+            if (isHPositive && tri[hMaxKeyAxis] < hOriginVal) continue;
+            if (!isHPositive && tri[hMinKeyAxis] > hOriginVal) continue;
             
             const dist = rayTriangleIntersect(rayOrigin, hDir, tri.v0, tri.v1, tri.v2);
             if (dist !== null && dist > minDistTolerance) {
@@ -903,6 +959,15 @@ const STLAnalyzer = (() => {
         slideDirections[candIdx] = validExitDir;
       }
     }
+
+    // 결과 캐시 저장
+    _undercutCache = {
+      partingH,
+      pullAxis,
+      flipAxis,
+      isUndercutMap,
+      slideDirections
+    };
 
     return { isUndercutMap, slideDirections };
   }
@@ -1055,14 +1120,17 @@ const STLAnalyzer = (() => {
     return components;
   }
 
-  function processCoreClusters(clusters, cSize, avgDim) {
+  function processCoreClusters(clusters, cSize, avgDim, isSlideType) {
     let finalFeatures = [];
     for (const dir in clusters) {
       if (clusters[dir].length < 30) continue; // Skip very small noise clusters
       
       const features = groupPointsIntoFeatures(clusters[dir], cSize);
       features.forEach(featPoints => {
-        if (featPoints.length < 15) return; // Skip minor noise features
+        // [5. 리프터 생성 조건 강화 및 노이즈 필터링]
+        // 포인트 개수 기본 15개에서 강화: 슬라이드는 최소 30개, 리프터는 최소 50개 이상만 인정
+        const minPointCount = isSlideType ? 30 : 50;
+        if (featPoints.length < minPointCount) return;
         
         // Bounding box filter
         let minX = Infinity, minY = Infinity, minZ = Infinity;
@@ -1078,8 +1146,10 @@ const STLAnalyzer = (() => {
         const maxFeatureDim = Math.max(fdx, fdy, fdz);
         const volume = fdx * fdy * fdz;
         
-        // 모델 크기 대비 최소 7% 이상의 가치 있는 크기를 지닌 기구식 언더컷 구간만 허용
-        if (maxFeatureDim < avgDim * 0.07) return;
+        // [5. 리프터 생성 조건 강화]
+        // 모델 크기 대비 최소 가치 기준값: 슬라이드는 7%, 리프터는 9% 이상만 허용하여 노이즈 과다 생성 차단
+        const minRatio = isSlideType ? 0.07 : 0.09;
+        if (maxFeatureDim < avgDim * minRatio) return;
         
         finalFeatures.push({
           dir,
@@ -1090,11 +1160,49 @@ const STLAnalyzer = (() => {
         });
       });
     }
+
+    // [3. 슬라이드/리프터 그룹화 로직 추가]
+    // 동일 방향을 향하면서 매우 인접한(중심 거리가 avgDim * 0.25 이내인) 특징점 클러스터들을 하나로 병합
+    let mergedFeatures = [];
+    const mergeThreshold = avgDim * 0.25;
+
+    for (let i = 0; i < finalFeatures.length; i++) {
+      let merged = false;
+      for (let j = 0; j < mergedFeatures.length; j++) {
+        if (finalFeatures[i].dir === mergedFeatures[j].dir) {
+          const c1 = finalFeatures[i].center;
+          const c2 = mergedFeatures[j].center;
+          const dist = Math.sqrt(Math.pow(c1.x - c2.x, 2) + Math.pow(c1.y - c2.y, 2) + Math.pow(c1.z - c2.z, 2));
+          
+          if (dist < mergeThreshold) {
+            // 인접 클러스터 병합 수행
+            mergedFeatures[j].points = mergedFeatures[j].points.concat(finalFeatures[i].points);
+            // 바운딩 박스 재계산
+            const pt = mergedFeatures[j].points;
+            let minX = Infinity, minY = Infinity, minZ = Infinity;
+            let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+            for (let k = 0; k < pt.length; k += 3) {
+              minX = Math.min(minX, pt[k]);   maxX = Math.max(maxX, pt[k]);
+              minY = Math.min(minY, pt[k+1]); maxY = Math.max(maxY, pt[k+1]);
+              minZ = Math.min(minZ, pt[k+2]); maxZ = Math.max(maxZ, pt[k+2]);
+            }
+            mergedFeatures[j].center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: (minZ + maxZ) / 2 };
+            mergedFeatures[j].dims = { dx: maxX - minX, dy: maxY - minY, dz: maxZ - minZ };
+            mergedFeatures[j].volume = (maxX - minX) * (maxY - minY) * (maxZ - minZ);
+            merged = true;
+            break;
+          }
+        }
+      }
+      if (!merged) {
+        mergedFeatures.push(finalFeatures[i]);
+      }
+    }
     
-    // Sort features by volume descending for ordering/index consistency, but do not slice/cap.
-    finalFeatures.sort((a, b) => b.volume - a.volume);
+    // 크기순 내림차순 정렬
+    mergedFeatures.sort((a, b) => b.volume - a.volume);
     
-    return finalFeatures;
+    return mergedFeatures;
   }
 
   /* ──────────────────────────────────────
@@ -1154,8 +1262,10 @@ const STLAnalyzer = (() => {
     }
     const partingH = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
 
+    const evalPullAxis = _pullAxis === 'AUTO' ? 'Z' : _pullAxis;
+
     // 물리적 간섭(Ray-casting) 기반 진짜 언더컷 맵 도출
-    const { isUndercutMap, slideDirections } = await getPhysicalUndercuts(pos, normals, partingH, _pullAxis, _flipAxis, onProgress);
+    const { isUndercutMap, slideDirections } = await getPhysicalUndercuts(pos, normals, partingH, evalPullAxis, _flipAxis, onProgress);
 
     let undercutFaces = 0, marginalFaces = 0, okFaces = 0, topFaces = 0;
 
@@ -1343,7 +1453,7 @@ const STLAnalyzer = (() => {
     const slideClusters = {};
     const lifterClusters = {};
     
-    for (let i = 0; i < normals.length; i += 3) {
+    for (let i = 0; i < pos.length; i += 9) {
       const nx = normals[i], ny = normals[i+1], nz = normals[i+2];
       const vx = pos[i], vy = pos[i+1], vz = pos[i+2];
       
@@ -1364,9 +1474,73 @@ const STLAnalyzer = (() => {
           if (!slideClusters[sDir]) slideClusters[sDir] = [];
           slideClusters[sDir].push(vx, vy, vz);
         } else {
-          // 사방이 벽으로 막혔으므로 경사 코어(변형코어)로 판정
-          if (!lifterClusters[pDir]) lifterClusters[pDir] = [];
-          lifterClusters[pDir].push(vx, vy, vz);
+          // [개선된 경사 코어 (리프터) 판정 로직]
+          // 1. Parting Plane 및 Core Side 판별
+          // 하판(Core Side)은 발취 방향의 반대(또는 flip 상태에 따라 하단) 소속이어야 함.
+          let isCoreSide = false;
+          let val = (_pullAxis === 'X') ? vx : ((_pullAxis === 'Y') ? vy : vz);
+          
+          if (_flipAxis) {
+            // 발취 방향이 마이너스이면 하판(Core Side)은 플러스 영역
+            isCoreSide = (val > partingH);
+          } else {
+            // 발취 방향이 플러스이면 하판(Core Side)은 마이너스 영역
+            isCoreSide = (val < partingH);
+          }
+
+          if (isCoreSide) {
+            // 2. 내부 포켓 및 외부 형상 제외 필터링
+            // 외부 형상(Cavity Side 외벽의 단차 등)을 걸러내기 위해 법선 방향과 가상 투사 거리를 통해 
+            // 주변 형상 벽에 둘러싸인 내부 포켓 구조(Pocket/Hollow)인지 체크
+            const pullDirVec = new THREE.Vector3();
+            if (_pullAxis === 'X') pullDirVec.set(1, 0, 0);
+            else if (_pullAxis === 'Y') pullDirVec.set(0, 1, 0);
+            else pullDirVec.set(0, 0, 1);
+            if (_flipAxis) pullDirVec.negate();
+
+            const triCentroid = new THREE.Vector3(
+              (pos[triIdx*9] + pos[triIdx*9+3] + pos[triIdx*9+6]) / 3,
+              (pos[triIdx*9+1] + pos[triIdx*9+4] + pos[triIdx*9+7]) / 3,
+              (pos[triIdx*9+2] + pos[triIdx*9+5] + pos[triIdx*9+8]) / 3
+            );
+            const triNormal = new THREE.Vector3(nx, ny, nz);
+
+            // 3. 리프터 스트로크 계산 및 기하 조건 검증
+            // 언더컷 벽면 깊이(d) 측정
+            let maxTravel = 0.0;
+            // 법선 역방향으로 레이를 쏘아 마주보는 제품 반대쪽 살두께 또는 포켓 벽과의 거리(D) 측정
+            const testDir = triNormal.clone().negate().normalize();
+            const biasOrigin = triCentroid.clone().add(triNormal.clone().multiplyScalar(0.1));
+            
+            // 경량화된 충돌 레이캐스팅으로 리브 폭/포켓 깊이(d) 측정
+            let minDistToOpposite = Infinity;
+            for (let t = 0; t < pos.length / 9; t++) {
+              if (Math.abs(t * 9 - triIdx * 9) < 9) continue;
+              const tv0 = new THREE.Vector3(pos[t*9], pos[t*9+1], pos[t*9+2]);
+              const tv1 = new THREE.Vector3(pos[t*9+3], pos[t*9+4], pos[t*9+5]);
+              const tv2 = new THREE.Vector3(pos[t*9+6], pos[t*9+7], pos[t*9+8]);
+              
+              const dist = rayTriangleIntersect(biasOrigin, testDir, tv0, tv1, tv2);
+              if (dist !== null && dist < minDistToOpposite) {
+                minDistToOpposite = dist;
+              }
+            }
+
+            // 언더컷 돌출(걸림) 깊이량 추정 (만일 맞은편 벽이 감지되면 그 내부 포켓 폭)
+            const undercutDepth = (minDistToOpposite !== Infinity) ? Math.max(1.0, minDistToOpposite * 0.5) : 3.0;
+            const theta = 12 * Math.PI / 180; // 리프터 기본 슬라이딩 작동 경사각 12도
+            const strokeRequired = undercutDepth / Math.tan(theta);
+
+            // 내부 포켓 구조 필터: 주변에 제품 내벽이나 본살 구조가 최소 1곳 이상 레이캐스팅상 마주보고 있으며,
+            // 최소 작동 스트로크가 2.0mm 이상 보장될 때만 리프터 기구로 판정
+            const isInnerPocket = (minDistToOpposite !== Infinity && minDistToOpposite < (avgDim * 0.5));
+            const isStrokeValid = strokeRequired >= 2.0;
+
+            if (isInnerPocket && isStrokeValid) {
+              if (!lifterClusters[pDir]) lifterClusters[pDir] = [];
+              lifterClusters[pDir].push(vx, vy, vz);
+            }
+          }
         }
       }
     }
@@ -1374,8 +1548,8 @@ const STLAnalyzer = (() => {
     const avgDim = (dx + dy + dz) / 3;
     const cSize = Math.max(5.0, Math.min(avgDim * 0.12, 25.0));
 
-    const finalSlides = processCoreClusters(slideClusters, cSize, avgDim);
-    const finalLifters = processCoreClusters(lifterClusters, cSize, avgDim);
+    const finalSlides = processCoreClusters(slideClusters, cSize, avgDim, true);
+    const finalLifters = processCoreClusters(lifterClusters, cSize, avgDim, false);
 
     finalSlides.forEach(feat => {
       moldFeatures.slides.push({ dir: feat.dir, center: feat.center });
@@ -1386,8 +1560,164 @@ const STLAnalyzer = (() => {
 
     const diagnostics = _getDiagnostics(minDim, maxDim, totalArea, matKey, mat);
 
+    // [최적 사출 성형방향 추천 시스템 (Auto-Pull Engine)]
+    // 방향 목록: +X, -X, +Y, -Y, +Z, -Z
+    const evalDirections = [
+      { axis: 'X', flip: false, label: '+X', pullDir: new THREE.Vector3(1, 0, 0) },
+      { axis: 'X', flip: true,  label: '-X', pullDir: new THREE.Vector3(-1, 0, 0) },
+      { axis: 'Y', flip: false, label: '+Y', pullDir: new THREE.Vector3(0, 1, 0) },
+      { axis: 'Y', flip: true,  label: '-Y', pullDir: new THREE.Vector3(0, -1, 0) },
+      { axis: 'Z', flip: false, label: '+Z', pullDir: new THREE.Vector3(0, 0, 1) },
+      { axis: 'Z', flip: true,  label: '-Z', pullDir: new THREE.Vector3(0, 0, -1) }
+    ];
+
+    let bestScore = Infinity;
+    let bestDirLabel = '';
+    let directionScores = {};
+
+    // 병렬 가속 연산 (Promise.all)
+    const runEvalTasks = evalDirections.map(async (d) => {
+      let minV, maxV;
+      if (d.axis === 'X') { minV = minX; maxV = maxX; }
+      else if (d.axis === 'Y') { minV = minY; maxV = maxY; }
+      else { minV = minZ; maxV = maxZ; }
+      const pHeight = minV + (maxV - minV) * (_partingHeightPct / 100);
+
+      // 6개 방향 각각에 대해 언더컷 판독 시뮬레이션
+      const { isUndercutMap: evalMap, slideDirections: evalSlidesMap } = await getPhysicalUndercuts(pos, normals, pHeight, d.axis, d.flip);
+
+      let uCount = 0;
+      let uArea = 0;
+      let okDraftCount = 0;
+      const sClusters = {};
+      const lClusters = {};
+
+      const vA = new THREE.Vector3();
+      const vB = new THREE.Vector3();
+      const vC = new THREE.Vector3();
+      const edge1 = new THREE.Vector3();
+      const edge2 = new THREE.Vector3();
+      const cross = new THREE.Vector3();
+
+      // Bounding Box on the projection plane perpendicular to d.pullDir to find Projected Area
+      let projMinU = Infinity, projMaxU = -Infinity;
+      let projMinV = Infinity, projMaxV = -Infinity;
+      let pAxisU, pAxisV;
+      if (d.axis === 'X') { pAxisU = 'y'; pAxisV = 'z'; }
+      else if (d.axis === 'Y') { pAxisU = 'x'; pAxisV = 'z'; }
+      else { pAxisU = 'x'; pAxisV = 'y'; }
+
+      for (let i = 0; i < pos.length; i += 9) {
+        const nx = normals[i], ny = normals[i+1], nz = normals[i+2];
+        const vx = pos[i], vy = pos[i+1], vz = pos[i+2];
+        const triIdx = Math.floor(i / 9);
+
+        // Projected area bounding box accumulation
+        const pu = pos[i];
+        const pv = pos[i + (pAxisV === 'y' ? 1 : 2)];
+        if (pu < projMinU) projMinU = pu;
+        if (pu > projMaxU) projMaxU = pu;
+        if (pv < projMinV) projMinV = pv;
+        if (pv > projMaxV) projMaxV = pv;
+
+        // Draft Angle Quality Calculation
+        const nVec = new THREE.Vector3(nx, ny, nz);
+        const dotVal = nVec.dot(d.pullDir);
+        if (Math.abs(dotVal) >= sin1) {
+          okDraftCount++;
+        }
+        
+        if (evalMap[triIdx] === 1) {
+          uCount++;
+          // 정밀 면적 산출
+          const pIdx = triIdx * 9;
+          vA.set(pos[pIdx],     pos[pIdx+1], pos[pIdx+2]);
+          vB.set(pos[pIdx+3],   pos[pIdx+4], pos[pIdx+5]);
+          vC.set(pos[pIdx+6],   pos[pIdx+7], pos[pIdx+8]);
+          edge1.subVectors(vB, vA);
+          edge2.subVectors(vC, vA);
+          cross.crossVectors(edge1, edge2);
+          uArea += cross.length() * 0.5;
+
+          const exitDir = evalSlidesMap[triIdx];
+          let pDir = '';
+          if (d.axis === 'X') { pDir = Math.abs(ny) > Math.abs(nz) ? (ny > 0 ? '+Y':'-Y') : (nz > 0 ? '+Z':'-Z'); }
+          else if (d.axis === 'Y') { pDir = Math.abs(nx) > Math.abs(nz) ? (nx > 0 ? '+X':'-X') : (nz > 0 ? '+Z':'-Z'); }
+          else { pDir = Math.abs(nx) > Math.abs(ny) ? (nx > 0 ? '+X':'-X') : (ny > 0 ? '+Y':'-Y'); }
+
+          if (exitDir !== null) {
+            if (!sClusters[exitDir]) sClusters[exitDir] = [];
+            sClusters[exitDir].push(vx, vy, vz);
+          } else {
+            if (!lClusters[pDir]) lClusters[pDir] = [];
+            lClusters[pDir].push(vx, vy, vz);
+          }
+        }
+      }
+
+      const evalSlidesList = processCoreClusters(sClusters, cSize, avgDim, true);
+      const evalLiftersList = processCoreClusters(lClusters, cSize, avgDim, false);
+
+      const sCount = evalSlidesList.length;
+      const lCount = evalLiftersList.length;
+
+      // Draft Quality (양호 구배각 면적 비율 0~100)
+      const draftQualityPct = triCount > 0 ? (okDraftCount / triCount) * 100 : 100;
+
+      // Projected Area (투영 단면적 in mm2)
+      const projArea = (projMaxU - projMinU) * (projMaxV - projMinV);
+
+      // Tool Complexity Score 계산식:
+      // (UndercutArea * 1) + (SlideCount * 50) + (LifterCount * 80) + ((100 - DraftQuality) * 2)
+      const dScore = (uArea * 1.0) + (sCount * 50.0) + (lCount * 80.0) + ((100.0 - draftQualityPct) * 2.0);
+
+      return {
+        label: d.label,
+        score: dScore,
+        undercutCount: uCount,
+        undercutArea: uArea,
+        slideCount: sCount,
+        lifterCount: lCount,
+        projectedArea: projArea,
+        draftQuality: draftQualityPct
+      };
+    });
+
+    const evaluatedResults = await Promise.all(runEvalTasks);
+    
+    evaluatedResults.forEach(res => {
+      directionScores[res.label] = res;
+      if (res.score < bestScore) {
+        bestScore = res.score;
+        bestDirLabel = res.label;
+      }
+    });
+
+    // 신뢰도(Confidence Score) 산정: 
+    // 최고 점수와 최저 점수의 분포 격차를 활용하여 백분율 계산 (모든 방향이 최선이면 100)
+    let maxEvalScore = -Infinity;
+    for (const k in directionScores) {
+      if (directionScores[k].score > maxEvalScore) maxEvalScore = directionScores[k].score;
+    }
+    const scoreDiff = maxEvalScore - bestScore;
+    const confidence = scoreDiff === 0 ? 100 : Math.min(100, Math.round((scoreDiff / (maxEvalScore + 1)) * 100));
+
+    // 복잡도 단계 산출
+    let compLevel = '낮음 🟢';
+    if (bestScore > 150) compLevel = '매우 높음 🔴';
+    else if (bestScore > 80) compLevel = '높음 🟡';
+    else if (bestScore > 30) compLevel = '보통 🔵';
+
+    const recommendation = {
+      bestDirection: bestDirLabel,
+      confidence: confidence,
+      complexityScore: Math.round(bestScore),
+      complexityLevel: compLevel,
+      scoresMap: directionScores
+    };
+
     return {
-      issues, score, moldFeatures, diagnostics,
+      issues, score, moldFeatures, diagnostics, recommendation,
       stats: { undercutPct, marginalPct, okPct, triCount, material: mat.name, shrinkRisk, isSimulated: stlData.isSimulated, metadata: stlData.metadata }
     };
   }
@@ -1540,7 +1870,7 @@ const STLAnalyzer = (() => {
     }
   }
 
-  function updateCoreHelpers(visible) {
+  async function updateCoreHelpers(visible) {
     if (_coreHelpers) {
       if (_mesh) _mesh.remove(_coreHelpers);
       _coreHelpers = null;
@@ -1569,12 +1899,12 @@ const STLAnalyzer = (() => {
     const partingH = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
 
     // 물리적 간섭(Ray-casting) 기반 진짜 언더컷 맵 도출
-    const { isUndercutMap, slideDirections } = getPhysicalUndercuts(pos, norm, partingH, _pullAxis, _flipAxis);
+    const { isUndercutMap, slideDirections } = await getPhysicalUndercuts(pos, norm, partingH, _pullAxis, _flipAxis);
 
     const slideClusters = {};
     const lifterClusters = {};
 
-    for (let i = 0; i < norm.length; i += 3) {
+    for (let i = 0; i < pos.length; i += 9) {
       const nx = norm[i], ny = norm[i+1], nz = norm[i+2];
       const vx = pos[i], vy = pos[i+1], vz = pos[i+2];
 
@@ -1596,9 +1926,62 @@ const STLAnalyzer = (() => {
           if (!slideClusters[sDir]) slideClusters[sDir] = [];
           slideClusters[sDir].push(vx_val, vy_val, vz_val);
         } else {
-          // 사방이 벽으로 막혔으므로 경사 코어(변형코어)로 판정
-          if (!lifterClusters[pDir]) lifterClusters[pDir] = [];
-          lifterClusters[pDir].push(vx_val, vy_val, vz_val);
+          // [개선된 경사 코어 (리프터) 판정 및 시각화 매칭 필터]
+          let isCoreSide = false;
+          let val = (_pullAxis === 'X') ? vx : ((_pullAxis === 'Y') ? vy : vz);
+          
+          if (_flipAxis) {
+            isCoreSide = (val > partingH);
+          } else {
+            isCoreSide = (val < partingH);
+          }
+
+          if (isCoreSide) {
+            const pullDirVec = new THREE.Vector3();
+            if (_pullAxis === 'X') pullDirVec.set(1, 0, 0);
+            else if (_pullAxis === 'Y') pullDirVec.set(0, 1, 0);
+            else pullDirVec.set(0, 0, 1);
+            if (_flipAxis) pullDirVec.negate();
+
+            const triCentroid = new THREE.Vector3(
+              (pos[triIdx*9] + pos[triIdx*9+3] + pos[triIdx*9+6]) / 3,
+              (pos[triIdx*9+1] + pos[triIdx*9+4] + pos[triIdx*9+7]) / 3,
+              (pos[triIdx*9+2] + pos[triIdx*9+5] + pos[triIdx*9+8]) / 3
+            );
+            const triNormal = new THREE.Vector3(nx, ny, nz);
+
+            const testDir = triNormal.clone().negate().normalize();
+            const biasOrigin = triCentroid.clone().add(triNormal.clone().multiplyScalar(0.1));
+            
+            let minDistToOpposite = Infinity;
+            for (let t = 0; t < pos.length / 9; t++) {
+              if (Math.abs(t * 9 - triIdx * 9) < 9) continue;
+              const tv0 = new THREE.Vector3(pos[t*9], pos[t*9+1], pos[t*9+2]);
+              const tv1 = new THREE.Vector3(pos[t*9+3], pos[t*9+4], pos[t*9+5]);
+              const tv2 = new THREE.Vector3(pos[t*9+6], pos[t*9+7], pos[t*9+8]);
+              
+              const dist = rayTriangleIntersect(biasOrigin, testDir, tv0, tv1, tv2);
+              if (dist !== null && dist < minDistToOpposite) {
+                minDistToOpposite = dist;
+              }
+            }
+
+            const modelSize = new THREE.Vector3();
+            box.getSize(modelSize);
+            const avgDim = (modelSize.x + modelSize.y + modelSize.z) / 3;
+
+            const undercutDepth = (minDistToOpposite !== Infinity) ? Math.max(1.0, minDistToOpposite * 0.5) : 3.0;
+            const theta = 12 * Math.PI / 180;
+            const strokeRequired = undercutDepth / Math.tan(theta);
+
+            const isInnerPocket = (minDistToOpposite !== Infinity && minDistToOpposite < (avgDim * 0.5));
+            const isStrokeValid = strokeRequired >= 2.0;
+
+            if (isInnerPocket && isStrokeValid) {
+              if (!lifterClusters[pDir]) lifterClusters[pDir] = [];
+              lifterClusters[pDir].push(vx_val, vy_val, vz_val);
+            }
+          }
         }
       }
     }
@@ -1769,8 +2152,8 @@ const STLAnalyzer = (() => {
     const avgDim = (size.x + size.y + size.z) / 3;
     const cSize = Math.max(5.0, Math.min(avgDim * 0.12, 25.0));
 
-    const finalSlides = processCoreClusters(slideClusters, cSize, avgDim);
-    const finalLifters = processCoreClusters(lifterClusters, cSize, avgDim);
+    const finalSlides = processCoreClusters(slideClusters, cSize, avgDim, true);
+    const finalLifters = processCoreClusters(lifterClusters, cSize, avgDim, false);
 
     let sIdx = 1;
     finalSlides.forEach(feat => {
@@ -1878,7 +2261,10 @@ const STLAnalyzer = (() => {
     return group;
   }
 
-  function updatePartingLine(visible, heightPct) {
+  // 모드 상태를 보관하기 위한 전역 변수
+  let _partingMode = 'manual';
+
+  function updatePartingLine(visible, heightPct, mode) {
     if (_partingLineObj) {
       _mesh.remove(_partingLineObj);
       _partingLineObj = null;
@@ -1889,10 +2275,13 @@ const STLAnalyzer = (() => {
     if (heightPct !== undefined) {
       _partingHeightPct = heightPct;
     }
+    if (mode !== undefined) {
+      _partingMode = mode;
+    }
 
     const pos = _geometry.attributes.position.array;
-    const partingPoints = [];
-    const partingDists = [];
+    const norm = _geometry.attributes.normal.array;
+    const triCount = pos.length / 9;
 
     _geometry.computeBoundingBox();
     const geoBox = _geometry.boundingBox;
@@ -1901,75 +2290,151 @@ const STLAnalyzer = (() => {
     const geoSize = new THREE.Vector3();
     geoBox.getSize(geoSize);
 
-    let minVal, maxVal;
-    if (_pullAxis === 'X') {
-      minVal = geoBox.min.x;
-      maxVal = geoBox.max.x;
-    } else if (_pullAxis === 'Y') {
-      minVal = geoBox.min.y;
-      maxVal = geoBox.max.y;
-    } else {
-      minVal = geoBox.min.z;
-      maxVal = geoBox.max.z;
-    }
+    const partingPoints = [];
+    const partingDists = [];
 
-    // Determine target plane height from the percentage
-    const H = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
+    const pullDir = new THREE.Vector3();
+    if (_pullAxis === 'X') pullDir.set(1, 0, 0);
+    else if (_pullAxis === 'Y') pullDir.set(0, 1, 0);
+    else pullDir.set(0, 0, 1);
+    if (_flipAxis) pullDir.negate();
 
-    const getVal = (v) => {
-      if (_pullAxis === 'X') return v.x;
-      if (_pullAxis === 'Y') return v.y;
-      return v.z;
-    };
+    if (_partingMode === 'auto') {
+      // [Auto Parting Line: 드래프트 부호 부호 반전 모서리 추출]
+      // 1단계: 각 삼각형의 드래프트 방향 부호 구함 (양수: Cavity, 음수: Core)
+      const dotVals = new Float32Array(triCount);
+      for (let t = 0; t < triCount; t++) {
+        const nx = norm[t*9], ny = norm[t*9+1], nz = norm[t*9+2];
+        const nVec = new THREE.Vector3(nx, ny, nz);
+        dotVals[t] = nVec.dot(pullDir);
+      }
 
-    // Calculate cross-section intersection contour of the plane H with all triangles
-    for (let i = 0; i < pos.length; i += 9) {
-      const v1 = new THREE.Vector3(pos[i],   pos[i+1], pos[i+2]);
-      const v2 = new THREE.Vector3(pos[i+3], pos[i+4], pos[i+5]);
-      const v3 = new THREE.Vector3(pos[i+6], pos[i+7], pos[i+8]);
-
-      const val1 = getVal(v1);
-      const val2 = getVal(v2);
-      const val3 = getVal(v3);
-
-      const pts = [];
-
-      const intersectEdge = (pA, pB, valA, valB, idxA, idxB) => {
-        if ((valA < H && valB > H) || (valA > H && valB < H)) {
-          const t = (H - valA) / (valB - valA);
-          const p = new THREE.Vector3().lerpVectors(pA, pB, t);
-          
-          let dVal = undefined;
-          if (_flowDistances) {
-            const distA = _flowDistances[idxA];
-            const distB = _flowDistances[idxB];
-            if (distA !== undefined && distB !== undefined) {
-              dVal = distA + t * (distB - distA);
-            }
-          }
-          pts.push({ p, dVal });
-        } else if (valA === H) {
-          let dVal = _flowDistances ? _flowDistances[idxA] : undefined;
-          pts.push({ p: pA.clone(), dVal });
-        }
+      // 2단계: 공유 에지 맵 빌드하여 구배 양음 반전 에지 추출
+      const edgeMap = {};
+      const getEdgeKey = (pA, pB) => {
+        const coords = [
+          Math.round(pA.x * 100) / 100, Math.round(pA.y * 100) / 100, Math.round(pA.z * 100) / 100,
+          Math.round(pB.x * 100) / 100, Math.round(pB.y * 100) / 100, Math.round(pB.z * 100) / 100
+        ];
+        // 정렬하여 에지 방향 독립적인 고유 키 형성
+        const pts = [coords.slice(0, 3), coords.slice(3, 6)];
+        pts.sort((a, b) => a[0] !== b[0] ? a[0] - b[0] : (a[1] !== b[1] ? a[1] - b[1] : a[2] - b[2]));
+        return `${pts[0][0]},${pts[0][1]},${pts[0][2]}_${pts[1][0]},${pts[1][1]},${pts[1][2]}`;
       };
 
-      intersectEdge(v1, v2, val1, val2, i/3, i/3 + 1);
-      intersectEdge(v2, v3, val2, val3, i/3 + 1, i/3 + 2);
-      intersectEdge(v3, v1, val3, val1, i/3 + 2, i/3);
+      for (let t = 0; t < triCount; t++) {
+        const idx = t * 9;
+        const v0 = new THREE.Vector3(pos[idx], pos[idx+1], pos[idx+2]);
+        const v1 = new THREE.Vector3(pos[idx+3], pos[idx+4], pos[idx+5]);
+        const v2 = new THREE.Vector3(pos[idx+6], pos[idx+7], pos[idx+8]);
 
-      // Deduplicate points that are extremely close
-      const uniquePts = [];
-      pts.forEach(item => {
-        if (!uniquePts.some(up => up.p.distanceTo(item.p) < 0.001)) {
-          uniquePts.push(item);
+        const edges = [
+          { pA: v0, pB: v1 },
+          { pA: v1, pB: v2 },
+          { pA: v2, pB: v0 }
+        ];
+
+        edges.forEach(e => {
+          const key = getEdgeKey(e.pA, e.pB);
+          if (!edgeMap[key]) {
+            edgeMap[key] = { pA: e.pA, pB: e.pB, triIndices: [] };
+          }
+          edgeMap[key].triIndices.push(t);
+        });
+      }
+
+      // 3단계: 공유하는 두 삼각형의 구배 부호가 반전되는 경계 에지만 선별하여 파팅라인 구성
+      for (const key in edgeMap) {
+        const edge = edgeMap[key];
+        if (edge.triIndices.length === 2) {
+          const tA = edge.triIndices[0];
+          const tB = edge.triIndices[1];
+          const sA = Math.sign(dotVals[tA]);
+          const sB = Math.sign(dotVals[tB]);
+          
+          // 구배 각도가 양수(Cavity)와 음수(Core)로 나뉘는 공유 모서리 에지
+          if ((sA > 0 && sB < 0) || (sA < 0 && sB > 0) || sA === 0 || sB === 0) {
+            partingPoints.push(edge.pA.x, edge.pA.y, edge.pA.z);
+            partingPoints.push(edge.pB.x, edge.pB.y, edge.pB.z);
+            partingDists.push(undefined, undefined);
+          }
         }
-      });
+      }
+    } else {
+      // [수동 평면 투영 절단선 파팅라인 계산]
+      let minVal, maxVal;
+      if (_pullAxis === 'X') {
+        minVal = geoBox.min.x; maxVal = geoBox.max.x;
+      } else if (_pullAxis === 'Y') {
+        minVal = geoBox.min.y; maxVal = geoBox.max.y;
+      } else {
+        minVal = geoBox.min.z; maxVal = geoBox.max.z;
+      }
+      const H = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
 
-      if (uniquePts.length >= 2) {
-        partingPoints.push(uniquePts[0].p.x, uniquePts[0].p.y, uniquePts[0].p.z);
-        partingPoints.push(uniquePts[1].p.x, uniquePts[1].p.y, uniquePts[1].p.z);
-        partingDists.push(uniquePts[0].dVal, uniquePts[1].dVal);
+      const getVal = (v) => {
+        if (_pullAxis === 'X') return v.x;
+        if (_pullAxis === 'Y') return v.y;
+        return v.z;
+      };
+
+      for (let i = 0; i < pos.length; i += 9) {
+        const v1 = new THREE.Vector3(pos[i],   pos[i+1], pos[i+2]);
+        const v2 = new THREE.Vector3(pos[i+3], pos[i+4], pos[i+5]);
+        const v3 = new THREE.Vector3(pos[i+6], pos[i+7], pos[i+8]);
+
+        const val1 = getVal(v1);
+        const val2 = getVal(v2);
+        const val3 = getVal(v3);
+
+        const pts = [];
+
+        const intersectEdge = (pA, pB, valA, valB, idxA, idxB) => {
+          if ((valA < H && valB > H) || (valA > H && valB < H)) {
+            const t = (H - valA) / (valB - valA);
+            const p = new THREE.Vector3().lerpVectors(pA, pB, t);
+            
+            let dVal = undefined;
+            if (_flowDistances) {
+              const distA = _flowDistances[idxA];
+              const distB = _flowDistances[idxB];
+              if (distA !== undefined && distB !== undefined) {
+                dVal = distA + t * (distB - distA);
+              }
+            }
+            pts.push({ p, dVal });
+          } else if (valA === H) {
+            let dVal = _flowDistances ? _flowDistances[idxA] : undefined;
+            pts.push({ p: pA.clone(), dVal });
+          }
+        };
+
+        intersectEdge(v1, v2, val1, val2, i/3, i/3 + 1);
+        intersectEdge(v2, v3, val2, val3, i/3 + 1, i/3 + 2);
+        intersectEdge(v3, v1, val3, val1, i/3 + 2, i/3);
+
+        const uniquePts = [];
+        const EPSILON = 0.0001;
+        pts.forEach(item => {
+          if (!uniquePts.some(up => up.p.distanceTo(item.p) < EPSILON)) {
+            uniquePts.push(item);
+          }
+        });
+
+        if (uniquePts.length === 2) {
+          partingPoints.push(uniquePts[0].p.x, uniquePts[0].p.y, uniquePts[0].p.z);
+          partingPoints.push(uniquePts[1].p.x, uniquePts[1].p.y, uniquePts[1].p.z);
+          partingDists.push(uniquePts[0].dVal, uniquePts[1].dVal);
+        } else if (uniquePts.length > 2) {
+          uniquePts.sort((a, b) => {
+            if (_pullAxis === 'X') return a.p.y !== b.p.y ? a.p.y - b.p.y : a.p.z - b.p.z;
+            if (_pullAxis === 'Y') return a.p.x !== b.p.x ? a.p.x - b.p.x : a.p.z - b.p.z;
+            return a.p.x !== b.p.x ? a.p.x - b.p.x : a.p.y - b.p.y;
+          });
+          partingPoints.push(uniquePts[0].p.x, uniquePts[0].p.y, uniquePts[0].p.z);
+          partingPoints.push(uniquePts[uniquePts.length - 1].p.x, uniquePts[uniquePts.length - 1].p.y, uniquePts[uniquePts.length - 1].p.z);
+          partingDists.push(uniquePts[0].dVal, uniquePts[uniquePts.length - 1].dVal);
+        }
       }
     }
 
@@ -1979,7 +2444,6 @@ const STLAnalyzer = (() => {
       const lineGeo = new THREE.BufferGeometry();
       lineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(partingPoints), 3));
       
-      // Calculate dynamic color for parting line segments if flow is playing
       const lineColors = new Float32Array(partingPoints.length);
       const targetDist = _maxFlowDistance * _flowAnimationTime;
       const frontWidth = _maxFlowDistance * 0.05;
@@ -1992,17 +2456,13 @@ const STLAnalyzer = (() => {
           if (d <= targetDist) {
             const age = targetDist - d;
             if (age < frontWidth) {
-              // Glowing flow front (white-yellow)
               r = 1.0; g = 1.0; b = 0.9;
             } else if (age < frontWidth * 3) {
-              // Hot orange-yellow
               r = 1.0; g = 0.7; b = 0.0;
             } else {
-              // Cooled solid color matching main overlay color
               r = 0.05; g = 0.35; b = 0.55; 
             }
           } else {
-            // Unfilled: very dark blue/black
             r = 0.03; g = 0.05; b = 0.12;
           }
         }
@@ -2012,43 +2472,75 @@ const STLAnalyzer = (() => {
       }
       lineGeo.setAttribute('color', new THREE.BufferAttribute(lineColors, 3));
 
-      // Solid parting line with glow
-      const lineMat1 = new THREE.LineBasicMaterial({ vertexColors: true, linewidth: 3, transparent: true, opacity: 0.95 });
+      // 3D 자동 파팅선일 때 파란색 계열, 평면일 때 밝은 청록색 계열로 구분 시각화
+      const coreColor = _partingMode === 'auto' ? 0x0055ff : 0x00ffff;
+
+      const lineMat1 = new THREE.LineBasicMaterial({ 
+        vertexColors: _partingMode === 'manual' && _flowOverlayActive, 
+        color: (_partingMode === 'auto' || !_flowOverlayActive) ? coreColor : undefined,
+        linewidth: 4, 
+        transparent: true, 
+        opacity: 0.95 
+      });
       const lineMesh1 = new THREE.LineSegments(lineGeo.clone(), lineMat1);
       _partingLineObj.add(lineMesh1);
       
-      // Glowing edge effect
-      const lineMat2 = new THREE.LineBasicMaterial({ vertexColors: true, linewidth: 6, transparent: true, opacity: 0.35, depthWrite: false });
+      const lineMat2 = new THREE.LineBasicMaterial({ 
+        vertexColors: _partingMode === 'manual' && _flowOverlayActive, 
+        color: (_partingMode === 'auto' || !_flowOverlayActive) ? coreColor : undefined,
+        linewidth: 8, 
+        transparent: true, 
+        opacity: 0.35, 
+        depthWrite: false 
+      });
       const lineMesh2 = new THREE.LineSegments(lineGeo.clone(), lineMat2);
       _partingLineObj.add(lineMesh2);
     }
 
-    // Render translucent Parting Surface Plane at height H
-    const planeSize = Math.max(geoSize.x, geoSize.y, geoSize.z) * 1.3;
-    const planeGeo = new THREE.PlaneGeometry(planeSize, planeSize);
-    const planeMat = new THREE.MeshPhongMaterial({ color: 0x00ffff, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false });
-    const planeMesh = new THREE.Mesh(planeGeo, planeMat);
-    
-    if (_pullAxis === 'X') {
-      planeMesh.rotation.y = Math.PI / 2;
-      planeMesh.position.set(H, geoCenter.y, geoCenter.z);
-    } else if (_pullAxis === 'Y') {
-      planeMesh.rotation.x = Math.PI / 2;
-      planeMesh.position.set(geoCenter.x, H, geoCenter.z);
-    } else {
-      planeMesh.position.set(geoCenter.x, geoCenter.y, H);
+    // [수동 평면 모드일 때만 반투명 절단 평면 렌더링]
+    if (_partingMode === 'manual') {
+      const planeSize = Math.max(geoSize.x, geoSize.y, geoSize.z) * 1.3;
+      const planeGeo = new THREE.PlaneGeometry(planeSize, planeSize);
+      const planeMat = new THREE.MeshPhongMaterial({ color: 0x00ffff, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false });
+      const planeMesh = new THREE.Mesh(planeGeo, planeMat);
+      
+      let minVal;
+      if (_pullAxis === 'X') {
+        minVal = geoBox.min.x;
+        planeMesh.rotation.y = Math.PI / 2;
+        planeMesh.position.set(minVal + (geoBox.max.x - minVal) * (_partingHeightPct / 100), geoCenter.y, geoCenter.z);
+      } else if (_pullAxis === 'Y') {
+        minVal = geoBox.min.y;
+        planeMesh.rotation.x = Math.PI / 2;
+        planeMesh.position.set(geoCenter.x, minVal + (geoBox.max.y - minVal) * (_partingHeightPct / 100), geoCenter.z);
+      } else {
+        minVal = geoBox.min.z;
+        planeMesh.position.set(geoCenter.x, geoCenter.y, minVal + (geoBox.max.z - minVal) * (_partingHeightPct / 100));
+      }
+      _partingLineObj.add(planeMesh);
     }
-    _partingLineObj.add(planeMesh);
     
     // Label positioned outside the model for visibility
-    const label = createTextSprite('파팅 라인', '#00ffff');
+    const labelTitle = _partingMode === 'auto' ? '3D 자동 파팅라인' : '파팅 라인 평면';
+    const labelColor = _partingMode === 'auto' ? '#0055ff' : '#00ffff';
+    const label = createTextSprite(labelTitle, labelColor);
     const labelOffset = Math.max(geoSize.x, geoSize.y, geoSize.z) * 0.55;
+    
+    let H_val = geoCenter.z;
+    if (_partingMode === 'manual') {
+      let minVal, maxVal;
+      if (_pullAxis === 'X') { minVal = geoBox.min.x; maxVal = geoBox.max.x; }
+      else if (_pullAxis === 'Y') { minVal = geoBox.min.y; maxVal = geoBox.max.y; }
+      else { minVal = geoBox.min.z; maxVal = geoBox.max.z; }
+      H_val = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
+    }
+
     if (_pullAxis === 'X') {
-      label.position.set(H, geoCenter.y + labelOffset, geoCenter.z);
+      label.position.set(H_val, geoCenter.y + labelOffset, geoCenter.z);
     } else if (_pullAxis === 'Y') {
-      label.position.set(geoCenter.x + labelOffset, H, geoCenter.z);
+      label.position.set(geoCenter.x + labelOffset, H_val, geoCenter.z);
     } else {
-      label.position.set(geoCenter.x, geoCenter.y + labelOffset, H);
+      label.position.set(geoCenter.x, geoCenter.y + labelOffset, H_val);
     }
     _partingLineObj.add(label);
 
