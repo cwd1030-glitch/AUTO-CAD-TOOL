@@ -68,17 +68,38 @@ const STLAnalyzer = (() => {
   }
 
   async function parseSTP(buffer) {
-    await loadScript('libs/occt-import-js.js');
+    if (!window.SharedArrayBuffer) {
+      throw new Error('SharedArrayBuffer 미지원 — WASM 엔진 초기화 불가. COOP/COEP 헤더가 필요합니다.');
+    }
 
-    const occt = await window.occtimportjs({
-      locateFile: (name) => 'libs/' + name
-    });
+    try {
+      await loadScript('libs/occt-import-js.js');
+    } catch (e) {
+      throw new Error('WASM 라이브러리(occt-import-js) 로드 실패: ' + e.message);
+    }
+
+    let occt;
+    try {
+      occt = await window.occtimportjs({
+        locateFile: (name) => 'libs/' + name
+      });
+    } catch (e) {
+      throw new Error('WASM 엔진 초기화 실패: ' + e.message);
+    }
 
     const uint8Array = new Uint8Array(buffer);
-    const result = occt.ReadStepFile(uint8Array, null);
+    let result;
+    try {
+      result = occt.ReadStepFile(uint8Array, null);
+    } catch (e) {
+      throw new Error('STEP 파일 파싱 중 오류: ' + e.message);
+    }
 
-    if (!result || !result.success || !result.meshes || result.meshes.length === 0) {
-      throw new Error('STEP 파일을 파싱할 수 없거나 유효한 3D 메쉬가 없습니다.');
+    if (!result || !result.success) {
+      throw new Error('STEP 파일을 파싱할 수 없습니다. AP214/AP242 형식인지 확인해 주세요.');
+    }
+    if (!result.meshes || result.meshes.length === 0) {
+      throw new Error('STEP 파일에서 유효한 3D 메쉬를 찾을 수 없습니다. 파일이 비어있거나 2D 도면일 수 있습니다.');
     }
 
     const positions = [];
@@ -682,7 +703,7 @@ const STLAnalyzer = (() => {
   }
 
   // 3.2.2 물리적 간섭 기반의 언더컷 판별 및 슬라이드/경사코어 방향 판별 함수
-  function getPhysicalUndercuts(pos, normals, partingH, pullAxis, flipAxis) {
+  async function getPhysicalUndercuts(pos, normals, partingH, pullAxis, flipAxis, onProgress) {
     const triCount = pos.length / 9;
     const isUndercutMap = new Uint8Array(triCount);
     const slideDirections = new Array(triCount).fill(null);
@@ -753,7 +774,19 @@ const STLAnalyzer = (() => {
     const horizDirs = getHorizontalDirs(pullAxis);
 
     // 3. 2차 Ray-casting 검증 (물리적 간섭이 있는 경우만 진짜 언더컷)
+    let lastYieldTime = performance.now();
     for (let c = 0; c < candidates.length; c++) {
+      const now = performance.now();
+      // Yield to the browser main thread if more than 24ms has elapsed to keep UI responsive
+      if (now - lastYieldTime > 24) {
+        lastYieldTime = now;
+        if (onProgress) {
+          const pct = Math.round(20 + (c / candidates.length) * 60);
+          onProgress(pct, `물리적 언더컷/코어 분석 중 (${c}/${candidates.length})...`);
+        }
+        await new Promise(resolve => requestAnimationFrame(resolve));
+      }
+
       const cand = candidates[c];
       let centerOffset = cand.centroid[axisKey] - partingH;
       if (flipAxis) centerOffset = -centerOffset;
@@ -768,8 +801,8 @@ const STLAnalyzer = (() => {
 
       // Define perpendicular axes for fast 2D AABB filtering
       let axisP1, axisP2;
-      if (_pullAxis === 'X') { axisP1 = 'y'; axisP2 = 'z'; }
-      else if (_pullAxis === 'Y') { axisP1 = 'x'; axisP2 = 'z'; }
+      if (pullAxis === 'X') { axisP1 = 'y'; axisP2 = 'z'; }
+      else if (pullAxis === 'Y') { axisP1 = 'x'; axisP2 = 'z'; }
       else { axisP1 = 'x'; axisP2 = 'y'; }
       const rx = rayOrigin[axisP1];
       const ry = rayOrigin[axisP2];
@@ -1067,7 +1100,7 @@ const STLAnalyzer = (() => {
   /* ──────────────────────────────────────
      4. ANALYSIS ENGINE
   ────────────────────────────────────── */
-  function analyze(stlData, matKey) {
+  async function analyze(stlData, matKey, onProgress) {
     const mat = MATERIAL_DB[matKey] || MATERIAL_DB.ABS;
     _material = matKey;
     const normals = stlData.normals;
@@ -1122,7 +1155,7 @@ const STLAnalyzer = (() => {
     const partingH = minVal + (maxVal - minVal) * (_partingHeightPct / 100);
 
     // 물리적 간섭(Ray-casting) 기반 진짜 언더컷 맵 도출
-    const { isUndercutMap, slideDirections } = getPhysicalUndercuts(pos, normals, partingH, _pullAxis, _flipAxis);
+    const { isUndercutMap, slideDirections } = await getPhysicalUndercuts(pos, normals, partingH, _pullAxis, _flipAxis, onProgress);
 
     let undercutFaces = 0, marginalFaces = 0, okFaces = 0, topFaces = 0;
 

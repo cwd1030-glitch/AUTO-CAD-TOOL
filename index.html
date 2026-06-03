@@ -108,19 +108,16 @@
           <div class="panel-header">
             <h3>📊 검증 평가 결과</h3>
           </div>
-          <div class="properties-content" id="results-2d" style="display:none">
-            <div class="score-card" id="score-card-2d">
-              <div class="score-ring-wrap">
-                <svg class="score-ring" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="42" class="ring-bg"/>
-                  <circle cx="50" cy="50" r="42" class="ring-fill" id="ring-fill-2d"/>
-                </svg>
-                <div class="score-center">
-                  <div class="score-number" id="score-num-2d">--</div>
-                  <div class="score-label-sm">/ 100</div>
+          <div class="properties-content" id="results-2d" style="display:none; flex-direction: column; gap: 14px;">
+            <div class="score-card-simple" style="display: flex; align-items: center; justify-content: space-between; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--creo-border-cad); border-radius: 8px; padding: 12px; margin-bottom: 4px;">
+              <div>
+                <div style="font-size: 0.72rem; color: #a0a5b5; margin-bottom: 2px;">양산성 평가 점수</div>
+                <div style="display: flex; align-items: baseline; gap: 4px;">
+                  <span id="score-num-2d" style="font-size: 1.6rem; font-weight: bold; color: var(--cyan);">--</span>
+                  <span style="font-size: 0.8rem; color: #a0a5b5;">/ 100</span>
                 </div>
               </div>
-              <div class="score-grade" id="score-grade-2d">--</div>
+              <div class="score-grade" id="score-grade-2d" style="font-size: 0.8rem; font-weight: bold; padding: 6px 12px; border-radius: 4px; background: rgba(255, 255, 255, 0.05); text-align: center; min-width: 90px;">--</div>
             </div>
             <div class="issues-list" id="issues-list-2d"></div>
           </div>
@@ -179,7 +176,50 @@
               </div>
             </div>
 
-            <div class="sidebar-padding" style="padding-top: 0;">
+            <div class="panel-header" style="border-top: 1px solid var(--creo-border-cad);">
+              <h3>📊 사출 공정 설정 (Parameters)</h3>
+            </div>
+            <div class="sidebar-padding">
+              <div class="process-parameter" style="display: flex; flex-direction: column; gap: 8px; font-size: 0.74rem;">
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span style="color: var(--cyan);">수지 온도 (Melt Temp):</span>
+                    <span id="val-melt-temp" style="color: #fff; font-weight: bold;">230°C</span>
+                  </div>
+                  <input type="range" id="slide-melt-temp" min="180" max="330" value="230" style="width: 100%; accent-color: var(--cyan);" />
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span style="color: var(--cyan);">금형 온도 (Mold Temp):</span>
+                    <span id="val-mold-temp" style="color: #fff; font-weight: bold;">50°C</span>
+                  </div>
+                  <input type="range" id="slide-mold-temp" min="20" max="150" value="50" style="width: 100%; accent-color: var(--cyan);" />
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span style="color: var(--cyan);">사출 속도 (Flow Rate):</span>
+                    <span id="val-flow-rate" style="color: #fff; font-weight: bold;">50 cm³/s</span>
+                  </div>
+                  <input type="range" id="slide-flow-rate" min="10" max="150" value="50" style="width: 100%; accent-color: var(--cyan);" />
+                </div>
+                <div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span style="color: var(--cyan);">사출 압력 제한 (Pressure Limit):</span>
+                    <span id="val-inj-pressure" style="color: #fff; font-weight: bold;">100 MPa</span>
+                  </div>
+                  <input type="range" id="slide-inj-pressure" min="50" max="200" value="100" step="5" style="width: 100%; accent-color: var(--cyan);" />
+                </div>
+                <div style="margin-top: 4px;">
+                  <span style="color: var(--cyan); display: block; margin-bottom: 4px;">러너 시스템 (Runner Type):</span>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                    <button class="runner-btn active" data-runner="cold" id="btn-runner-cold">콜드 러너</button>
+                    <button class="runner-btn" data-runner="hot" id="btn-runner-hot">핫 러너</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="sidebar-padding" style="padding-top: 10px;">
               <button class="btn btn-primary" id="btn-analyze-3d" style="margin-top: 10px;">
                 🚀 사출성형성 분석 실행
               </button>
@@ -249,6 +289,15 @@
           </div>
           <div id="canvas-3d" style="display:none; width:100%; height:100%;"></div>
 
+          <!-- 3D 로드 에러 오버레이 -->
+          <div id="viewer-error-overlay" style="display:none; position:absolute; inset:0; background:rgba(10,12,20,0.92); z-index:200; display:none; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:32px;">
+            <div style="font-size:2.8rem;">⚠️</div>
+            <div style="font-size:1.1rem; font-weight:700; color:#ff6b6b; text-align:center;" id="viewer-error-title">파일 로딩 실패</div>
+            <div style="font-size:0.82rem; color:#b0b8cc; text-align:center; max-width:420px; line-height:1.7;" id="viewer-error-desc"></div>
+            <div id="viewer-error-guide" style="background:rgba(0,212,255,0.08); border:1px solid rgba(0,212,255,0.25); border-radius:8px; padding:14px 20px; font-size:0.78rem; color:#7dd3fc; max-width:420px; line-height:1.8; display:none;"></div>
+            <button onclick="document.getElementById('viewer-error-overlay').style.display='none'; document.getElementById('placeholder-3d').style.display='flex';" style="margin-top:8px; padding:8px 22px; background:rgba(255,107,107,0.15); border:1px solid rgba(255,107,107,0.4); border-radius:6px; color:#ff6b6b; cursor:pointer; font-size:0.8rem;">닫기</button>
+          </div>
+
           <!-- Floating Viewport Toolbar (Creo CAD style) -->
           <div class="viewer-toolbar horizontal-viewer-toolbar" id="toolbar-3d" style="display:none">
             <!-- Shading Toggle -->
@@ -299,19 +348,16 @@
           <div class="panel-header">
             <h3>📊 성형 분석 결과</h3>
           </div>
-          <div class="properties-content" id="results-3d" style="display:none">
-            <div class="score-card" id="score-card-3d">
-              <div class="score-ring-wrap">
-                <svg class="score-ring" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="42" class="ring-bg"/>
-                  <circle cx="50" cy="50" r="42" class="ring-fill" id="ring-fill-3d"/>
-                </svg>
-                <div class="score-center">
-                  <div class="score-number" id="score-num-3d">--</div>
-                  <div class="score-label-sm">/ 100</div>
+          <div class="properties-content" id="results-3d" style="display:none; flex-direction: column; gap: 14px;">
+            <div class="score-card-simple" style="display: flex; align-items: center; justify-content: space-between; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--creo-border-cad); border-radius: 8px; padding: 12px; margin-bottom: 4px;">
+              <div>
+                <div style="font-size: 0.72rem; color: #a0a5b5; margin-bottom: 2px;">종합 양산성 점수</div>
+                <div style="display: flex; align-items: baseline; gap: 4px;">
+                  <span id="score-num-3d" style="font-size: 1.6rem; font-weight: bold; color: var(--cyan);">--</span>
+                  <span style="font-size: 0.8rem; color: #a0a5b5;">/ 100</span>
                 </div>
               </div>
-              <div class="score-grade" id="score-grade-3d">--</div>
+              <div class="score-grade" id="score-grade-3d" style="font-size: 0.8rem; font-weight: bold; padding: 6px 12px; border-radius: 4px; background: rgba(255, 255, 255, 0.05); text-align: center; min-width: 90px;">--</div>
             </div>
 
             <!-- Color Legends -->
@@ -334,12 +380,64 @@
             </div>
 
             <!-- Gate Position Stats -->
-            <div class="mold-features" id="gate-info-3d" style="display:none;">
-              <div class="feature-card">
-                <div class="feature-title" style="color: var(--cyan);">🎯 게이트 좌표</div>
-                <div class="feature-desc">
-                  <span id="gate-coords">X: -, Y: -, Z: -</span><br/>
-                  <small id="gate-flow-status" style="color: var(--green);">클릭하여 주입구 지정 가능</small>
+            <!-- Gate Position Stats -->
+            <div class="mold-features" id="gate-info-3d" style="display:none; padding: 0; border: none; background: transparent;">
+              <div style="border: 1px solid var(--creo-border-cad); background: rgba(0, 0, 0, 0.3); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                <div style="color: var(--cyan); font-weight: bold; font-size: 0.78rem; display: flex; align-items: center; gap: 4px;">
+                  <span>🎯</span> <span>게이트 설정 정보</span>
+                </div>
+                <div style="font-size: 0.72rem; color: #b0c4de; display: flex; flex-direction: column; gap: 4px; width: 100%;">
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">위치 좌표</span>
+                    <span id="gate-coords" style="color:#fff; font-weight:bold;">X: -, Y: -, Z: -</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">유동 상태</span>
+                    <span id="gate-flow-status" style="color: var(--green); font-weight:bold;">최대 유동 거리: -</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 사출 공정 진단 결과 (물리 지표) -->
+            <div class="mold-features" id="diagnostics-info-3d" style="display:none; margin-top: 10px; padding: 0; border: none; background: transparent;">
+              <div style="border: 1px solid rgba(0, 212, 255, 0.25); background: rgba(0, 0, 0, 0.4); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; width: 100%;">
+                <div style="color: var(--cyan); font-weight: bold; font-size: 0.78rem; border-bottom: 1px solid rgba(0, 212, 255, 0.15); padding-bottom: 6px; margin-bottom: 2px; display: flex; align-items: center; gap: 4px;">
+                  <span>💧</span> <span>사출 성형 물리 진단 (CAE)</span>
+                </div>
+                <div style="font-size: 0.72rem; color: #b0c4de; display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">최대 압력 강하 (ΔP)</span>
+                    <span id="diag-pressure" style="color:#00ffa3; font-weight:bold; font-size:0.75rem; text-align: right;">- MPa</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">충전 완료 시간 (t_fill)</span>
+                    <span id="diag-fill-time" style="color:#00d4ff; font-weight:bold; font-size:0.75rem; text-align: right;">- s</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">게이트 통과 유속 (v_gate)</span>
+                    <span id="diag-gate-velocity" style="color:#ffd166; font-weight:bold; font-size:0.75rem; text-align: right;">- m/s</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">필요 형체력 (F_clamp)</span>
+                    <span id="diag-clamp" style="color:#fff; font-weight:bold; font-size:0.75rem; text-align: right;">- Tons</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">권장 냉각 시간 (t_c)</span>
+                    <span id="diag-cooling" style="color:#fff; font-weight:bold; font-size:0.75rem; text-align: right;">- s</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">권장 게이트 크기 (D_g)</span>
+                    <span id="diag-gate-size" style="color:#ffd166; font-weight:bold; font-size:0.72rem; text-align: right; word-break: break-all;">- mm</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">투영 면적 (A_proj)</span>
+                    <span id="diag-proj-area" style="color:#fff; font-weight:bold; font-size:0.75rem; text-align: right;">- ㎠</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">수지 상대 점도 (η_rel)</span>
+                    <span id="diag-viscosity" style="color:#fff; font-weight:bold; font-size:0.75rem; text-align: right;">-</span>
+                  </div>
                 </div>
               </div>
             </div>

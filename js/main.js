@@ -9,7 +9,7 @@
 const App = {
   currentTab: '2d',
   dxf: { file: null, parsed: null, result: null },
-  stl: { file: null, parsed: null, result: null, material: 'ABS', pullAxis: 'Z', flipAxis: false, showCores: false, showParting: false },
+  stl: { file: null, parsed: null, result: null, material: 'ABS', pullAxis: 'Z', flipAxis: false, showCores: false, showParting: false, fillingTime: 2.0 },
   threeInit: false,
 };
 
@@ -226,6 +226,20 @@ window.addEventListener('DOMContentLoaded', () => {
       viewport2d.classList.remove('drag-over');
       const f = e.dataTransfer.files[0];
       if (f) handle2DFile(f);
+    });
+  }
+
+  const zone2d = $('upload-zone-2d');
+  if (zone2d) {
+    zone2d.style.cursor = 'pointer';
+    zone2d.addEventListener('click', () => input2d.click());
+  }
+  const zone3d = $('upload-zone-3d');
+  if (zone3d) {
+    zone3d.style.cursor = 'pointer';
+    zone3d.addEventListener('click', () => {
+      const input3d = $('file-input-3d');
+      if (input3d) input3d.click();
     });
   }
 });
@@ -483,6 +497,7 @@ window.addEventListener('DOMContentLoaded', () => {
       STLAnalyzer.updateCoreHelpers(App.stl.showCores);
       const btn = $('btn-core-overlay');
       if (btn) btn.classList.toggle('active', App.stl.showCores);
+      renderMoldFeatures();
     });
   }
 });
@@ -520,11 +535,119 @@ document.querySelectorAll('.mat-btn').forEach(btn => {
     App.stl.material = btn.dataset.mat;
     $('tree-material-name').textContent = `소재: ${btn.dataset.mat}`;
     logToConsole(`사출 수지 변경: ${btn.dataset.mat}`, 'info');
+
+    // Auto-update process sliders to typical recommended values
+    const defaults = {
+      ABS: { melt: 230, mold: 50 },
+      PC: { melt: 290, mold: 80 },
+      PP: { melt: 220, mold: 40 },
+      POM: { melt: 200, mold: 70 },
+      FORTRON: { melt: 310, mold: 130 }
+    }[btn.dataset.mat];
+
+    if (defaults) {
+      if ($('slide-melt-temp')) { $('slide-melt-temp').value = defaults.melt; $('val-melt-temp').textContent = `${defaults.melt}°C`; }
+      if ($('slide-mold-temp')) { $('slide-mold-temp').value = defaults.mold; $('val-mold-temp').textContent = `${defaults.mold}°C`; }
+      STLAnalyzer.setPhysicalParams(defaults.melt, defaults.mold);
+    }
+
     if (App.stl.parsed) {
       reRun3DAnalysis();
     }
   });
 });
+
+// Physical parameter sliders binding
+const slideMeltTemp = $('slide-melt-temp');
+const slideMoldTemp = $('slide-mold-temp');
+const slideFlowRate = $('slide-flow-rate');
+const slideInjPressure = $('slide-inj-pressure');
+
+function updatePhysicalParams() {
+  const meltVal = parseInt(slideMeltTemp.value);
+  const moldVal = parseInt(slideMoldTemp.value);
+  const flowVal = parseInt(slideFlowRate.value);
+  const pressVal = slideInjPressure ? parseInt(slideInjPressure.value) : 100;
+
+  $('val-melt-temp').textContent = `${meltVal}°C`;
+  $('val-mold-temp').textContent = `${moldVal}°C`;
+  $('val-flow-rate').textContent = `${flowVal} cm³/s`;
+  if (slideInjPressure) {
+    $('val-inj-pressure').textContent = `${pressVal} MPa`;
+  }
+
+  STLAnalyzer.setPhysicalParams(meltVal, moldVal, flowVal, pressVal);
+}
+
+if (slideMeltTemp) {
+  slideMeltTemp.addEventListener('input', () => {
+    $('val-melt-temp').textContent = `${slideMeltTemp.value}°C`;
+  });
+  slideMeltTemp.addEventListener('change', () => {
+    updatePhysicalParams();
+    triggerPhysicalReanalysis();
+  });
+}
+
+if (slideMoldTemp) {
+  slideMoldTemp.addEventListener('input', () => {
+    $('val-mold-temp').textContent = `${slideMoldTemp.value}°C`;
+  });
+  slideMoldTemp.addEventListener('change', () => {
+    updatePhysicalParams();
+    triggerPhysicalReanalysis();
+  });
+}
+
+if (slideFlowRate) {
+  slideFlowRate.addEventListener('input', () => {
+    $('val-flow-rate').textContent = `${slideFlowRate.value} cm³/s`;
+  });
+  slideFlowRate.addEventListener('change', () => {
+    updatePhysicalParams();
+    triggerPhysicalReanalysis();
+  });
+}
+
+if (slideInjPressure) {
+  slideInjPressure.addEventListener('input', () => {
+    $('val-inj-pressure').textContent = `${slideInjPressure.value} MPa`;
+  });
+  slideInjPressure.addEventListener('change', () => {
+    updatePhysicalParams();
+    triggerPhysicalReanalysis();
+  });
+}
+
+// Runner system selection binding
+document.querySelectorAll('.runner-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.runner-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    App.stl.runner = btn.dataset.runner;
+    logToConsole(`러너 시스템 형식 변경: ${btn.dataset.runner === 'hot' ? '핫 러너 (Hot Runner)' : '콜드 러너 (Cold Runner)'}`, 'info');
+    
+    if (typeof STLAnalyzer.setRunnerType === 'function') {
+      STLAnalyzer.setRunnerType(btn.dataset.runner);
+    }
+    
+    triggerPhysicalReanalysis();
+  });
+});
+
+function triggerPhysicalReanalysis() {
+  if (App.stl.parsed) {
+    if (STLAnalyzer.getGatePositions().length > 0) {
+      const flowRes = STLAnalyzer.recalculateFlow();
+      if (flowRes) {
+        updateGateInfoPanel(flowRes);
+        updateAnalysisIssuesWithGate(flowRes);
+      }
+    } else {
+      reRun3DAnalysis();
+    }
+  }
+}
 
 const btnFlipAxis = $('btn-flip-axis');
 if (btnFlipAxis) {
@@ -585,7 +708,15 @@ async function reRun3DAnalysis() {
   STLAnalyzer.setPullAxis(App.stl.pullAxis);
   STLAnalyzer.recolorGeometry();
 
-  const result = STLAnalyzer.analyze(App.stl.parsed, App.stl.material);
+  showLoading('설정 변경에 따른 재분석 수행 중...');
+  
+  const result = await STLAnalyzer.analyze(App.stl.parsed, App.stl.material, (pct, text) => {
+    setProgress(pct);
+    if (text) $('loading-text').textContent = text;
+  });
+  
+  hideLoading();
+
   const isSTP = App.stl.file.name.toLowerCase().endsWith('.stp') || App.stl.file.name.toLowerCase().endsWith('.step');
   if (isSTP) {
     result.issues.unshift({
@@ -600,6 +731,9 @@ async function reRun3DAnalysis() {
   animateScore('score-num-3d', 'ring-fill-3d', 'score-grade-3d', result.score);
   renderMoldFeatures(result.moldFeatures);
   renderIssues('issues-list-3d', result.issues);
+  if (result.diagnostics) {
+    updateDiagnosticsPanel(result.diagnostics);
+  }
 
   STLAnalyzer.updateCoreHelpers(App.stl.showCores);
   STLAnalyzer.updatePartingLine(App.stl.showParting, parseInt($('parting-slider').value));
@@ -613,17 +747,19 @@ $('btn-analyze-3d').addEventListener('click', run3DAnalysis);
 async function run3DAnalysis() {
   if (!App.stl.file) return;
   const isSTP = App.stl.file.name.toLowerCase().endsWith('.stp') || App.stl.file.name.toLowerCase().endsWith('.step');
+
+  // 이전 에러 오버레이 초기화
+  const errOverlay = $('viewer-error-overlay');
+  if (errOverlay) errOverlay.style.display = 'none';
+
   showLoading(isSTP ? 'STP 파일 분석 중...' : 'STL 파일 분석 중...');
   setStatus('busy', '3D 분석 중');
   logToConsole(`3D 모델 기하학적 및 물리적 사출성형성 해석 해석을 시작합니다... (소재: ${App.stl.material})`, 'system');
 
   await fakeProgress([
-    [15, 300, isSTP ? 'STP 메시 구조 해석 중...' : 'STL 메시 파싱 중...'],
-    [35, 600, isSTP ? '기하학적 피처 추출 중...' : '법선 벡터 분석 중...'],
-    [55, 500, isSTP ? '구배각 시뮬레이션 중...' : '구배각 계산 중...'],
-    [70, 400, isSTP ? '살두께 편차 추정 중...' : '살두께 추정 중...'],
-    [85, 400, isSTP ? '사출성형성 종합 평가 중...' : '사출성형성 평가 중...'],
-    [95, 300, '3D 뷰어 렌더링 중...'],
+    [10, 100, isSTP ? 'STP 메시 구조 해석 중...' : 'STL 메시 파싱 중...'],
+    [15, 100, isSTP ? '기하학적 피처 추출 중...' : '법선 벡터 분석 중...'],
+    [20, 100, '기하 데이터 정렬 중...']
   ]);
 
   try {
@@ -642,7 +778,124 @@ async function run3DAnalysis() {
       container.style.display = 'block';
       STLAnalyzer.initViewer();
       App.threeInit = true;
-      container.addEventListener('click', handleViewerClick);
+      const canvas = STLAnalyzer.getCanvas();
+      if (canvas) {
+        STLAnalyzer.onGateRepositioned((flowRes) => {
+          if (flowRes) {
+            updateGateInfoPanel(flowRes);
+            updateAnalysisIssuesWithGate(flowRes);
+            resetFlowAnimation();
+            startFlowAnimation();
+          }
+        });
+
+        // Create a custom context menu dynamically
+        let ctxMenu = $('gate-context-menu');
+        if (!ctxMenu) {
+          ctxMenu = document.createElement('div');
+          ctxMenu.id = 'gate-context-menu';
+          ctxMenu.style.position = 'absolute';
+          ctxMenu.style.display = 'none';
+          ctxMenu.style.background = 'var(--creo-bg-panel, #1e1e24)';
+          ctxMenu.style.border = '1px solid var(--creo-border-cad, #3d4b66)';
+          ctxMenu.style.borderRadius = '6px';
+          ctxMenu.style.padding = '4px 0';
+          ctxMenu.style.zIndex = '99999';
+          ctxMenu.style.boxShadow = '0 6px 16px rgba(0,0,0,0.5)';
+          ctxMenu.style.color = '#ffffff';
+          ctxMenu.style.fontSize = '0.75rem';
+          ctxMenu.style.userSelect = 'none';
+          ctxMenu.style.minWidth = '120px';
+
+          document.body.appendChild(ctxMenu);
+
+          document.addEventListener('click', () => {
+            ctxMenu.style.display = 'none';
+          });
+        }
+
+        STLAnalyzer.onRightClickModel((data) => {
+          ctxMenu.style.left = `${data.clientX + 5}px`;
+          ctxMenu.style.top = `${data.clientY + 5}px`;
+          ctxMenu.style.display = 'block';
+
+          // Clear previous menu items
+          ctxMenu.innerHTML = '';
+
+          if (data.action === 'delete_gate') {
+            const delBtn = document.createElement('div');
+            delBtn.id = 'ctx-btn-delete-gate';
+            delBtn.textContent = `❌ 주입구 G${data.gateIndex + 1} 삭제`;
+            delBtn.style.padding = '8px 16px';
+            delBtn.style.cursor = 'pointer';
+            delBtn.style.transition = 'background 0.2s';
+            delBtn.addEventListener('mouseenter', () => delBtn.style.background = 'rgba(255,55,55,0.2)');
+            delBtn.addEventListener('mouseleave', () => delBtn.style.background = 'transparent');
+            ctxMenu.appendChild(delBtn);
+
+            delBtn.addEventListener('click', () => {
+              ctxMenu.style.display = 'none';
+              STLAnalyzer.removeGateAt(data.gateIndex);
+              
+              const count = STLAnalyzer.getGatePositions().length;
+              $('tree-gate-status').textContent = `주입구 (Gates): ${count}개`;
+              
+              if (count === 0) {
+                $('gate-info-3d').style.display = 'none';
+                $('flow-controls').style.display = 'none';
+                reRun3DAnalysis();
+                showToast('모든 게이트가 제거되었습니다.', 'info');
+                logToConsole('모든 게이트 주입구가 제거되었습니다.', 'warning');
+              } else {
+                const flowRes = STLAnalyzer.recalculateFlow();
+                if (flowRes) {
+                  updateGateInfoPanel(flowRes);
+                  updateAnalysisIssuesWithGate(flowRes);
+                }
+                showToast(`게이트 제거 (남은 게이트: ${count}개)`, 'info');
+                logToConsole(`게이트 제거 완료. 남은 개수: ${count}개`, 'info');
+                resetFlowAnimation();
+                startFlowAnimation();
+              }
+            });
+          } else {
+            const addBtn = document.createElement('div');
+            addBtn.id = 'ctx-btn-add-gate';
+            addBtn.textContent = '🎯 주입구 (Gate) 추가';
+            addBtn.style.padding = '8px 16px';
+            addBtn.style.cursor = 'pointer';
+            addBtn.style.transition = 'background 0.2s';
+            addBtn.addEventListener('mouseenter', () => addBtn.style.background = 'rgba(255,255,255,0.1)');
+            addBtn.addEventListener('mouseleave', () => addBtn.style.background = 'transparent');
+            ctxMenu.appendChild(addBtn);
+
+            addBtn.addEventListener('click', () => {
+              ctxMenu.style.display = 'none';
+              const result = STLAnalyzer.addGatePosition(data.worldPoint, data.localPoint, data.faceNormal);
+              if (result) {
+                const count = result.gateCount;
+                $('tree-gate-status').textContent = `주입구 (Gates): ${count}개`;
+                showToast(`게이트 G${result.gateIndex + 1} 설정 완료 (총 ${count}개)`, 'ok');
+                logToConsole(`새로운 사출 게이트 G${result.gateIndex + 1} 추가 완료.`, 'success');
+                updateGateInfoPanel(result);
+                updateAnalysisIssuesWithGate(result);
+
+                STLAnalyzer.toggleFlowOverlay(true);
+                document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+                $('btn-flow-overlay').classList.add('active');
+                const chk = $('tree-chk-draft'); if (chk) chk.checked = false;
+
+                $('legend-draft').style.display = 'none';
+                $('legend-flow').style.display = 'flex';
+                $('flow-controls').style.display = 'flex';
+
+                resetFlowAnimation();
+                startFlowAnimation();
+              }
+            });
+          }
+        });
+      }
     } else {
       container.style.display = 'block';
     }
@@ -681,6 +934,7 @@ async function run3DAnalysis() {
     STLAnalyzer.toggleShrinkageOverlay(false);
     resetFlowAnimation();
     App.stl.baseIssues = null;
+    App.stl.gateVelocityRatios = [];
 
     STLAnalyzer.setPullAxis(App.stl.pullAxis);
     STLAnalyzer.loadGeometry(stlData);
@@ -688,7 +942,10 @@ async function run3DAnalysis() {
     STLAnalyzer.updatePartingLine(App.stl.showParting, 50);
 
     // Analysis
-    const result = STLAnalyzer.analyze(stlData, App.stl.material);
+    const result = await STLAnalyzer.analyze(stlData, App.stl.material, (pct, text) => {
+      setProgress(pct);
+      if (text) $('loading-text').textContent = text;
+    });
     if (isSTP) {
       result.issues.unshift({
         level: 'info',
@@ -702,6 +959,9 @@ async function run3DAnalysis() {
     animateScore('score-num-3d', 'ring-fill-3d', 'score-grade-3d', result.score);
     renderMoldFeatures(result.moldFeatures);
     renderIssues('issues-list-3d', result.issues);
+    if (result.diagnostics) {
+      updateDiagnosticsPanel(result.diagnostics);
+    }
 
     // Update tree gate text
     $('tree-gate-status').textContent = `주입구 (Gates): ${STLAnalyzer.getGatePositions().length}개`;
@@ -716,9 +976,58 @@ async function run3DAnalysis() {
   } catch (err) {
     hideLoading();
     setStatus('error', '오류');
-    showToast((isSTP ? 'STP' : 'STL') + ' 분석 오류: ' + err.message, 'error');
-    logToConsole(`[에러] 3D 제품 분석 실패: ${err.message}`, 'error');
     console.error(err);
+
+    const errMsg = err.message || '알 수 없는 오류';
+    logToConsole(`[에러] 3D 제품 분석 실패: ${errMsg}`, 'error');
+
+    // 뷰포트 에러 오버레이 표시
+    const overlay = $('viewer-error-overlay');
+    const titleEl = $('viewer-error-title');
+    const descEl = $('viewer-error-desc');
+    const guideEl = $('viewer-error-guide');
+
+    if (overlay) {
+      $('placeholder-3d').style.display = 'none';
+      $('canvas-3d').style.display = 'none';
+
+      let title = '파일 로딩 실패';
+      let desc = errMsg;
+      let guide = '';
+
+      if (isSTP) {
+        title = 'STP/STEP 파일 로딩 실패';
+
+        if (errMsg.includes('SharedArrayBuffer') || errMsg.includes('WASM') || errMsg.includes('library')) {
+          desc = 'WASM 렌더링 엔진 초기화에 실패했습니다. 브라우저 보안 정책(COOP/COEP 헤더)으로 인해 STP 파싱이 차단되었을 수 있습니다.';
+          guide = '💡 해결 방법:\n• DIMA 전용 서버(server.ps1)를 통해 실행하세요\n• Chrome / Edge 최신 버전을 사용해 주세요\n• 또는 STP 파일을 STL로 변환 후 업로드 하세요';
+        } else if (errMsg.includes('메쉬') || errMsg.includes('mesh') || errMsg.includes('파싱')) {
+          desc = 'STP 파일에서 3D 메쉬를 추출하지 못했습니다. 파일이 손상되었거나 지원하지 않는 STEP 형식일 수 있습니다.';
+          guide = '💡 해결 방법:\n• CAD 소프트웨어(CATIA, SolidWorks, Creo 등)에서 STL로 내보내기 후 업로드\n• 권장 설정: STL 정밀도 0.1mm, ASCII 또는 Binary 형식\n• AP214 / AP242 형식의 STEP 파일을 사용해 주세요';
+        } else {
+          desc = `STP 파일 처리 중 오류가 발생했습니다: ${errMsg}`;
+          guide = '💡 STL 형식으로 변환 후 업로드하면 더 안정적으로 분석할 수 있습니다.\nSolidWorks: 파일 → 내보내기 → STL\nCATIA: 파일 → 저장 형식 → .stl\nCreo: 파일 → 내보내기 → STL';
+        }
+      } else {
+        title = 'STL 파일 로딩 실패';
+        desc = `STL 파일 파싱 중 오류가 발생했습니다: ${errMsg}`;
+        guide = '💡 해결 방법:\n• STL 파일이 손상되지 않았는지 확인해 주세요\n• Binary STL 또는 ASCII STL 형식을 지원합니다\n• 파일 크기가 너무 크면 삼각형 수를 줄여 저장해 주세요';
+      }
+
+      titleEl.textContent = title;
+      descEl.textContent = desc;
+      if (guide) {
+        guideEl.style.display = 'block';
+        guideEl.style.whiteSpace = 'pre-line';
+        guideEl.textContent = guide;
+      } else {
+        guideEl.style.display = 'none';
+      }
+
+      overlay.style.display = 'flex';
+    }
+
+    showToast((isSTP ? 'STP' : 'STL') + ' 로딩 실패 — 뷰포트에서 상세 안내를 확인하세요', 'error');
   }
 }
 
@@ -837,7 +1146,8 @@ function resetFlowAnimation() {
   stopFlowAnimation();
   flowAnimPct = 0;
   $('flow-slider').value = 0;
-  $('flow-time-display').textContent = `0.0s / 2.0s`;
+  const totalT = App.stl.fillingTime || 2.0;
+  $('flow-time-display').textContent = `0.0s / ${totalT.toFixed(1)}s`;
   STLAnalyzer.setFlowAnimationTime(0);
 }
 
@@ -855,15 +1165,15 @@ function startFlowAnimation() {
     const delta = timestamp - lastAnimTime;
     lastAnimTime = timestamp;
     
-    // 2.0초 전체 주기를 60fps 이상으로 부드럽게 보간 (delta * 0.05 가 1배속 기준)
-    flowAnimPct += (delta * 0.05) * flowSpeedMultiplier;
+    const totalT = App.stl.fillingTime || 2.0;
+    flowAnimPct += (delta * (0.1 / totalT)) * flowSpeedMultiplier;
     if (flowAnimPct > 100) {
       flowAnimPct = 0;
     }
     
     const val = Math.floor(flowAnimPct);
     $('flow-slider').value = val;
-    $('flow-time-display').textContent = `${(val * 2.0 / 100).toFixed(1)}s / 2.0s`;
+    $('flow-time-display').textContent = `${(val * totalT / 100).toFixed(1)}s / ${totalT.toFixed(1)}s`;
     STLAnalyzer.setFlowAnimationTime(val / 100);
     
     flowAnimFrame = requestAnimationFrame(animLoop);
@@ -894,7 +1204,8 @@ if ($('flow-speed-select')) {
 $('flow-slider').addEventListener('input', (e) => {
   stopFlowAnimation();
   flowAnimPct = parseInt(e.target.value);
-  $('flow-time-display').textContent = `${(flowAnimPct * 2.0 / 100).toFixed(1)}s / 2.0s`;
+  const totalT = App.stl.fillingTime || 2.0;
+  $('flow-time-display').textContent = `${(flowAnimPct * totalT / 100).toFixed(1)}s / ${totalT.toFixed(1)}s`;
   STLAnalyzer.setFlowAnimationTime(flowAnimPct / 100);
 });
 
@@ -947,15 +1258,140 @@ function handleViewerClick(e) {
   startFlowAnimation();
 }
 
-function updateGateInfoPanel(result) {
-  $('gate-info-3d').style.display = 'flex';
-  const count = result.gateCount || STLAnalyzer.getGatePositions().length;
-  if (count > 1) {
-    $('gate-coords').textContent = `게이트 ${count}개 설정됨 (마커 클릭으로 개별 제거)`;
-  } else if (result.worldCoords) {
-    $('gate-coords').textContent = `X: ${result.worldCoords.x.toFixed(1)}, Y: ${result.worldCoords.y.toFixed(1)}, Z: ${result.worldCoords.z.toFixed(1)}`;
+function updateDiagnosticsPanel(diagnostics) {
+  const panel = $('diagnostics-info-3d');
+  if (!panel || !diagnostics) return;
+
+  panel.style.display = 'flex';
+  $('diag-pressure').textContent = `${diagnostics.estimatedPressureDrop.toFixed(1)} MPa`;
+  $('diag-clamp').textContent = `${diagnostics.clampingForce.toFixed(1)} Tons`;
+  $('diag-cooling').textContent = `${diagnostics.maxCoolingTime.toFixed(1)} s`;
+
+  let gatesStr = '-';
+  if (diagnostics.suggestedGates && diagnostics.suggestedGates.length > 0) {
+    gatesStr = diagnostics.suggestedGates.map(g => `G${g.index + 1}: ${g.diameter.toFixed(1)}mm`).join(', ');
   }
-  $('gate-flow-status').innerHTML = `최대 유동 거리: <span style="color:var(--cyan); font-weight:bold;">${(result.maxFlowDistance || 0).toFixed(1)}mm</span>`;
+  $('diag-gate-size').textContent = gatesStr;
+  $('diag-proj-area').textContent = `${diagnostics.projectedArea.toFixed(1)} ㎠`;
+  $('diag-viscosity').textContent = `${diagnostics.viscosityRatio.toFixed(2)}x`;
+  
+  if (diagnostics.fillingTime) {
+    App.stl.fillingTime = diagnostics.fillingTime;
+    const val = parseInt($('flow-slider').value);
+    $('flow-time-display').textContent = `${(val * App.stl.fillingTime / 100).toFixed(1)}s / ${App.stl.fillingTime.toFixed(1)}s`;
+    $('diag-fill-time').textContent = `${diagnostics.fillingTime.toFixed(2)} s`;
+  } else {
+    $('diag-fill-time').textContent = `- s`;
+  }
+
+  if (diagnostics.suggestedGates && diagnostics.suggestedGates.length > 0) {
+    const qTotal = diagnostics.flowRate || 50;
+    const gateCount = diagnostics.suggestedGates.length;
+    const qPerGate = qTotal / gateCount;
+    const avgDia = diagnostics.suggestedGates.reduce((sum, g) => sum + g.diameter, 0) / gateCount;
+    const area = Math.PI * Math.pow(avgDia / 2, 2);
+    const velocity = qPerGate / area;
+    $('diag-gate-velocity').textContent = `${velocity.toFixed(1)} m/s`;
+  } else {
+    $('diag-gate-velocity').textContent = `- m/s`;
+  }
+  
+  if (diagnostics.estimatedPressureDrop > 100) {
+    $('diag-pressure').style.color = '#ff4d6d';
+  } else if (diagnostics.estimatedPressureDrop > 80) {
+    $('diag-pressure').style.color = '#ffd166';
+  } else {
+    $('diag-pressure').style.color = '#00ffa3';
+  }
+
+  if (diagnostics.meltTempStatus === 'warning') {
+    $('diag-viscosity').style.color = '#ffd166';
+  } else {
+    $('diag-viscosity').style.color = '#ffffff';
+  }
+}
+
+function updateGateInfoPanel(result) {
+  const container = $('gate-info-3d');
+  if (!container) return;
+  container.style.display = 'flex';
+
+  const gates = STLAnalyzer.getGatePositions();
+  const count = gates.length;
+  
+  if (count === 0) {
+    container.style.display = 'none';
+    return;
+  }
+
+  // Build HTML for gate controls dynamically
+  let html = `
+    <div style="border: 1px solid var(--creo-border-cad); background: rgba(0, 0, 0, 0.3); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; width: 100%;">
+      <div style="color: var(--cyan); font-weight: bold; font-size: 0.78rem; display: flex; align-items: center; justify-content: space-between;">
+        <span>🎯 게이트 개별 속도 (밸브) 제어</span>
+        <small style="color: #b0c4de;">총 ${count}개</small>
+      </div>
+      <div style="font-size: 0.72rem; color: #b0c4de; display: flex; flex-direction: column; gap: 8px; width: 100%;">
+  `;
+
+  gates.forEach((gp, idx) => {
+    const vR = App.stl.gateVelocityRatios && App.stl.gateVelocityRatios[idx] !== undefined ? App.stl.gateVelocityRatios[idx] : 1.0;
+    const isClosed = vR === 0;
+    const label = isClosed ? '밸브 닫힘 (0%)' : `속도: ${(vR * 100).toFixed(0)}%`;
+    
+    html += `
+      <div style="border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; margin-bottom: 2px;">
+        <div style="display:flex; justify-content:space-between; align-items: center; margin-bottom: 4px;">
+          <span style="font-weight: bold; color: ${isClosed ? '#ff4d6d' : 'var(--cyan)'};">주입구 G${idx + 1}</span>
+          <span id="gate-val-display-${idx}" style="color:#fff; font-weight:bold; font-size:0.7rem;">${label}</span>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="range" class="gate-speed-slider" data-gate-idx="${idx}" min="0" max="150" value="${vR * 100}" style="flex: 1; accent-color: ${isClosed ? '#ff4d6d' : 'var(--cyan)'}; height: 4px;" />
+          <span style="font-size: 0.65rem; color: #a0a5b5; width: 45px; text-align: right;">X:${gp.x.toFixed(0)} Y:${gp.y.toFixed(0)}</span>
+        </div>
+      </div>
+    `;
+  });
+
+  html += `
+      </div>
+    </div>
+  `;
+  
+  container.innerHTML = html;
+
+  // Bind input and change events to the gate speed sliders
+  container.querySelectorAll('.gate-speed-slider').forEach(slider => {
+    const idx = parseInt(slider.dataset.gateIdx);
+    
+    const updateDisplay = () => {
+      const val = parseInt(slider.value) / 100;
+      const display = container.querySelector(`#gate-val-display-${idx}`);
+      if (display) {
+        display.textContent = val === 0 ? '밸브 닫힘 (0%)' : `속도: ${(val * 100).toFixed(0)}%`;
+        display.style.color = val === 0 ? '#ff4d6d' : '#fff';
+      }
+    };
+    
+    slider.addEventListener('input', updateDisplay);
+    slider.addEventListener('change', () => {
+      const val = parseInt(slider.value) / 100;
+      if (!App.stl.gateVelocityRatios) App.stl.gateVelocityRatios = [];
+      App.stl.gateVelocityRatios[idx] = val;
+      
+      // Update in STLAnalyzer
+      const flowRes = STLAnalyzer.setGateParams(idx, val, undefined);
+      if (flowRes) {
+        updateAnalysisIssuesWithGate(flowRes);
+      }
+      resetFlowAnimation();
+      startFlowAnimation();
+    });
+  });
+
+  if (result.diagnostics) {
+    updateDiagnosticsPanel(result.diagnostics);
+  }
 }
 
 function updateAnalysisIssuesWithGate(gateResult) {
@@ -969,6 +1405,24 @@ function updateAnalysisIssuesWithGate(gateResult) {
   const mat = { ABS: 120, PC: 95, PP: 180, POM: 140, FORTRON: 125 }[matKey] || 120;
   const maxDist = gateResult.maxFlowDistance;
   
+  if (gateResult.diagnostics) {
+    const deltaP = gateResult.diagnostics.estimatedPressureDrop;
+    const limit = gateResult.diagnostics.pressureLimit || 100;
+    if (deltaP > limit) {
+      issues.unshift({
+        level: 'error',
+        title: '사출 압력 한계 초과 (미성형 위험)',
+        desc: `필요 사출 압력(${deltaP.toFixed(1)} MPa)이 설정된 압력 한계(${limit} MPa)를 초과하여 미성형(Short Shot) 위험이 있습니다. 유량을 낮추거나 수지 온도를 올리십시오.`
+      });
+    } else if (deltaP > limit * 0.8) {
+      issues.unshift({
+        level: 'warning',
+        title: '사출 압력 주의 (압력 임계치 도달)',
+        desc: `필요 사출 압력(${deltaP.toFixed(1)} MPa)이 설정된 압력 한계(${limit} MPa)의 80%를 넘었습니다. 성형성이 불안정할 수 있습니다.`
+      });
+    }
+  }
+
   if (maxDist > mat) {
     issues.unshift({
       level: 'error',
@@ -1034,6 +1488,7 @@ $('btn-core-overlay').addEventListener('click', function() {
   }
   this.classList.toggle('active', App.stl.showCores);
   const chk = $('tree-chk-cores'); if (chk) chk.checked = App.stl.showCores;
+  renderMoldFeatures();
   if (App.stl.showCores) {
     showToast('금형 코어 가이드 표시 활성화', 'ok');
     logToConsole('금형 언더컷 코어 가이드 표시: ON', 'info');
@@ -1076,15 +1531,23 @@ $('parting-slider').addEventListener('input', (e) => {
   }
 });
 
-function updateAnalysisOnPartingChange() {
+async function updateAnalysisOnPartingChange() {
   if (!App.stl.parsed) return;
-  const result = STLAnalyzer.analyze(App.stl.parsed, App.stl.material);
-  App.stl.result = result;
-  
-  animateScore('score-num-3d', 'ring-fill-3d', 'score-grade-3d', result.score);
-  renderMoldFeatures(result.moldFeatures);
-  renderIssues('issues-list-3d', result.issues);
-  STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+  if (updateAnalysisOnPartingChange.running) return;
+  updateAnalysisOnPartingChange.running = true;
+  try {
+    const result = await STLAnalyzer.analyze(App.stl.parsed, App.stl.material);
+    App.stl.result = result;
+    
+    animateScore('score-num-3d', 'ring-fill-3d', 'score-grade-3d', result.score);
+    renderMoldFeatures(result.moldFeatures);
+    renderIssues('issues-list-3d', result.issues);
+    STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+  } catch (err) {
+    console.error('Error during parting change analysis:', err);
+  } finally {
+    updateAnalysisOnPartingChange.running = false;
+  }
 }
 
 $('btn-reset-cam').addEventListener('click', () => STLAnalyzer.resetCamera());
@@ -1096,7 +1559,9 @@ function animateScore(numId, ringId, gradeId, score) {
   const ring  = $(ringId);
   const circ  = 263.9; // 2π * 42
   const offset = circ - (score / 100) * circ;
-  ring.style.strokeDashoffset = offset;
+  if (ring) {
+    ring.style.strokeDashoffset = offset;
+  }
 
   // Color by score
   let color, grade;
@@ -1105,11 +1570,16 @@ function animateScore(numId, ringId, gradeId, score) {
   else if (score >= 50) { color = '#ffd166'; grade = '⚠️ 경고 (WARN)'; }
   else                  { color = '#ff4d6d'; grade = '❌ 불합격 (FAIL)'; }
 
-  ring.style.stroke = color;
-  ring.style.filter = `drop-shadow(0 0 6px ${color})`;
-  $(gradeId).textContent = grade;
-  $(gradeId).style.background = color + '22';
-  $(gradeId).style.color = color;
+  if (ring) {
+    ring.style.stroke = color;
+    ring.style.filter = `drop-shadow(0 0 6px ${color})`;
+  }
+  const el = $(gradeId);
+  if (el) {
+    el.textContent = grade;
+    el.style.background = color + '22';
+    el.style.color = color;
+  }
 
   // Count up animation
   let cur = 0;
@@ -1285,6 +1755,14 @@ function buildReport() {
       <div class="report-stat"><span class="stat-label">삼각 면 수</span><span class="stat-value">${r.stats.triCount.toLocaleString()}개</span></div>
       <div class="report-stat"><span class="stat-label">언더컷 비율</span><span class="stat-value" style="color:#ff4d6d">${r.stats.undercutPct.toFixed(1)}%</span></div>
       <div class="report-stat"><span class="stat-label">수축 위험도</span><span class="stat-value">${r.stats.shrinkRisk}</span></div>
+      ${r.diagnostics ? `
+      <div class="report-stat" style="border-top:1px dashed #3d4b66; margin-top:8px; padding-top:8px;"><span class="stat-label">사출 온도 (Melt Temp)</span><span class="stat-value">${r.diagnostics.meltTemp} °C</span></div>
+      <div class="report-stat"><span class="stat-label">금형 온도 (Mold Temp)</span><span class="stat-value">${r.diagnostics.moldTemp} °C</span></div>
+      <div class="report-stat"><span class="stat-label">사출 유량 (Flow Rate)</span><span class="stat-value">${r.diagnostics.flowRate} cm³/s</span></div>
+      <div class="report-stat"><span class="stat-label">추정 압력 강하 (ΔP)</span><span class="stat-value" style="color:#ffd166">${r.diagnostics.estimatedPressureDrop.toFixed(1)} MPa</span></div>
+      <div class="report-stat"><span class="stat-label">소재 취출 냉각 시간</span><span class="stat-value" style="color:#00ffa3">${r.diagnostics.maxCoolingTime.toFixed(1)} 초</span></div>
+      <div class="report-stat"><span class="stat-label">필요 형체력 (F_clamp)</span><span class="stat-value" style="color:#00d4ff">${r.diagnostics.clampingForce.toFixed(1)} Tons</span></div>
+      ` : ''}
     </div>`;
   }
 
@@ -1306,7 +1784,13 @@ function renderMoldFeatures(features) {
   const container = $('mold-features-3d');
   if (!container) return;
   
-  if (!features || (features.slides.length === 0 && features.lifters.length === 0)) {
+  if (features) {
+    App.stl.moldFeatures = features;
+  } else {
+    features = App.stl.moldFeatures;
+  }
+  
+  if (!features || (features.slides.length === 0 && features.lifters.length === 0) || !App.stl.showCores) {
     container.style.display = 'none';
     return;
   }
