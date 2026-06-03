@@ -27,17 +27,30 @@ const STLAnalyzer = (() => {
   let _flowOverlayActive = false;
   let _shrinkageOverlayActive = false;
   let _flowDistances = null;
+  let _vertexThickness = null;
   let _maxFlowDistance = 0;
   let _isGateSettingMode = false;
+  let _draggedGateIndex = -1;
+  let _draggedGateOrigPos = null;
+  let _gateVelocityRatios = [];
+  let _gatePressureRatios = [];
+  let _onGateRepositionedCallback = null;
+  let _onRightClickModelCallback = null;
   let _flowAnimationTime = 0.0;
   let _adjacencyGraph = null;
 
+  let _meltTemp = 230;
+  let _moldTemp = 50;
+  let _flowRate = 50;
+  let _runnerType = 'cold';
+  let _pressureLimit = 100;
+
   const MATERIAL_DB = {
-    ABS: { shrink: 0.005, minDraft: 1.0, ribRatio: 0.6, name: 'ABS' },
-    PC:  { shrink: 0.006, minDraft: 1.5, ribRatio: 0.55, name: 'PC (폴리카보네이트)' },
-    PP:  { shrink: 0.015, minDraft: 2.0, ribRatio: 0.5,  name: 'PP (폴리프로필렌)' },
-    POM: { shrink: 0.020, minDraft: 0.5, ribRatio: 0.5,  name: 'POM (아세탈)' },
-    FORTRON: { shrink: 0.005, minDraft: 1.5, ribRatio: 0.5, name: 'FORTRON (PPS 수지)' },
+    ABS: { shrink: 0.005, minDraft: 1.0, ribRatio: 0.6, name: 'ABS', alpha: 0.08, Tm: 230, Tw: 50, Te: 90, TmMin: 200, TmMax: 280, TwMin: 40, TwMax: 90 },
+    PC:  { shrink: 0.006, minDraft: 1.5, ribRatio: 0.55, name: 'PC (폴리카보네이트)', alpha: 0.12, Tm: 290, Tw: 80, Te: 130, TmMin: 280, TmMax: 320, TwMin: 70, TwMax: 120 },
+    PP:  { shrink: 0.015, minDraft: 2.0, ribRatio: 0.5,  name: 'PP (폴리프로필렌)', alpha: 0.07, Tm: 220, Tw: 40, Te: 80, TmMin: 200, TmMax: 260, TwMin: 20, TwMax: 80 },
+    POM: { shrink: 0.020, minDraft: 0.5, ribRatio: 0.5,  name: 'POM (아세탈)', alpha: 0.09, Tm: 200, Tw: 70, Te: 100, TmMin: 190, TmMax: 230, TwMin: 60, TwMax: 120 },
+    FORTRON: { shrink: 0.005, minDraft: 1.5, ribRatio: 0.5, name: 'FORTRON (PPS 수지)', alpha: 0.10, Tm: 310, Tw: 130, Te: 150, TmMin: 300, TmMax: 340, TwMin: 120, TwMax: 160 },
   };
 
   /* ──────────────────────────────────────
@@ -259,8 +272,17 @@ const STLAnalyzer = (() => {
     _controls.maxDistance = 5000;
 
     // Gimbal interaction
+    let startX = 0, startY = 0;
+    _renderer.domElement.addEventListener('mousedown', (event) => {
+      startX = event.clientX;
+      startY = event.clientY;
+    });
     _renderer.domElement.addEventListener('click', (event) => {
       if (!_gimbalWidget) return;
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+      if (Math.sqrt(dx * dx + dy * dy) >= 15) return; // Dragged
+
       const rect = _renderer.domElement.getBoundingClientRect();
       const mouse = new THREE.Vector2(
         ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -279,6 +301,208 @@ const STLAnalyzer = (() => {
           const btn = document.querySelector(`.axis-btn[data-axis="${axis}"]`);
           if (btn) {
             btn.click();
+          }
+        }
+      }
+    });
+
+    // Left-click Gate Repositioning & Right-click menu
+    let dragStartX = 0, dragStartY = 0;
+    let rightClickStartX = 0, rightClickStartY = 0;
+
+    _renderer.domElement.addEventListener('pointerdown', (event) => {
+      if (event.button === 0) { // Left click
+        dragStartX = event.clientX;
+        dragStartY = event.clientY;
+
+        if (!_mesh || !_camera) return;
+        const rect = _renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, _camera);
+
+        // If we are already moving/dragging a gate, clicking again places it on the geometry
+        if (_draggedGateIndex !== -1) {
+          const intersects = raycaster.intersectObject(_mesh);
+          if (intersects.length > 0) {
+            const intersect = intersects[0];
+            const localPoint = _mesh.worldToLocal(intersect.point.clone());
+            const posAttr = _geometry.attributes.position;
+            const face = intersect.face;
+            const vA = new THREE.Vector3().fromBufferAttribute(posAttr, face.a);
+            const vB = new THREE.Vector3().fromBufferAttribute(posAttr, face.b);
+            const vC = new THREE.Vector3().fromBufferAttribute(posAttr, face.c);
+            const faceNormal = new THREE.Vector3()
+              .crossVectors(new THREE.Vector3().subVectors(vB, vA), new THREE.Vector3().subVectors(vC, vA))
+              .normalize();
+
+            _gatePositions[_draggedGateIndex].copy(localPoint);
+            _gateNormals[_draggedGateIndex] = faceNormal.clone();
+
+            const marker = _gateMarkers[_draggedGateIndex];
+            marker.position.copy(localPoint);
+            marker.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), faceNormal.clone().negate().normalize());
+          }
+          _controls.enabled = true;
+          const flowRes = recalculateFlow();
+          if (_onGateRepositionedCallback) {
+            _onGateRepositionedCallback(flowRes);
+          }
+          _draggedGateIndex = -1;
+          event.stopPropagation();
+          return;
+        }
+
+        // Try to pick up a gate marker
+        if (_gateMarkers.length > 0) {
+          const markerHits = raycaster.intersectObjects(_gateMarkers, true);
+          if (markerHits.length > 0) {
+            let hit = markerHits[0].object;
+            while (hit.parent && _gateMarkers.indexOf(hit) < 0) hit = hit.parent;
+            const idx = _gateMarkers.indexOf(hit);
+            if (idx >= 0) {
+              _draggedGateIndex = idx;
+              _draggedGateOrigPos = _gatePositions[idx].clone();
+              _controls.enabled = false; // Stop camera rotation
+            }
+          }
+        }
+      } else if (event.button === 2) { // Right click
+        rightClickStartX = event.clientX;
+        rightClickStartY = event.clientY;
+      }
+    });
+
+    _renderer.domElement.addEventListener('pointermove', (event) => {
+      if (_draggedGateIndex !== -1 && _mesh && _camera) {
+        const rect = _renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, _camera);
+
+        const intersects = raycaster.intersectObject(_mesh);
+        if (intersects.length > 0) {
+          const intersect = intersects[0];
+          const localPoint = _mesh.worldToLocal(intersect.point.clone());
+          const posAttr = _geometry.attributes.position;
+          const face = intersect.face;
+          const vA = new THREE.Vector3().fromBufferAttribute(posAttr, face.a);
+          const vB = new THREE.Vector3().fromBufferAttribute(posAttr, face.b);
+          const vC = new THREE.Vector3().fromBufferAttribute(posAttr, face.c);
+          const faceNormal = new THREE.Vector3()
+            .crossVectors(new THREE.Vector3().subVectors(vB, vA), new THREE.Vector3().subVectors(vC, vA))
+            .normalize();
+
+          _gatePositions[_draggedGateIndex].copy(localPoint);
+          _gateNormals[_draggedGateIndex] = faceNormal.clone();
+
+          const marker = _gateMarkers[_draggedGateIndex];
+          marker.position.copy(localPoint);
+          marker.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), faceNormal.clone().negate().normalize());
+        }
+      }
+    });
+
+    const onPointerUp = (event) => {
+      if (_draggedGateIndex !== -1) {
+        const dx = event.clientX - dragStartX;
+        const dy = event.clientY - dragStartY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        _controls.enabled = true;
+
+        if (dist > 5) {
+          // Real drag: gate moved to new position, recalculate flow
+          const flowRes = recalculateFlow();
+          if (_onGateRepositionedCallback) {
+            _onGateRepositionedCallback(flowRes);
+          }
+        } else {
+          // Simple click: restore gate to original position before pickup
+          const marker = _gateMarkers[_draggedGateIndex];
+          const origNorm = _gateNormals[_draggedGateIndex];
+          if (marker && _draggedGateOrigPos) {
+            _gatePositions[_draggedGateIndex].copy(_draggedGateOrigPos);
+            marker.position.copy(_draggedGateOrigPos);
+            if (origNorm) {
+              marker.quaternion.setFromUnitVectors(
+                new THREE.Vector3(0, 1, 0),
+                origNorm.clone().negate().normalize()
+              );
+            }
+          }
+        }
+        _draggedGateIndex = -1;
+        _draggedGateOrigPos = null;
+      }
+    };
+    _renderer.domElement.addEventListener('pointerup', onPointerUp);
+    _renderer.domElement.addEventListener('pointercancel', onPointerUp);
+
+    _renderer.domElement.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      
+      const dx = event.clientX - rightClickStartX;
+      const dy = event.clientY - rightClickStartY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist < 10 && _mesh && _camera) {
+        const rect = _renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, _camera);
+
+        if (_gateMarkers.length > 0) {
+          const markerHits = raycaster.intersectObjects(_gateMarkers, true);
+          if (markerHits.length > 0) {
+            let hit = markerHits[0].object;
+            while (hit.parent && _gateMarkers.indexOf(hit) < 0) hit = hit.parent;
+            const idx = _gateMarkers.indexOf(hit);
+            if (idx >= 0) {
+              if (_onRightClickModelCallback) {
+                _onRightClickModelCallback({
+                  action: 'delete_gate',
+                  gateIndex: idx,
+                  clientX: event.clientX,
+                  clientY: event.clientY
+                });
+              }
+              return;
+            }
+          }
+        }
+
+        const intersects = raycaster.intersectObject(_mesh);
+        if (intersects.length > 0) {
+          const intersect = intersects[0];
+          const localPoint = _mesh.worldToLocal(intersect.point.clone());
+          const posAttr = _geometry.attributes.position;
+          const face = intersect.face;
+          const vA = new THREE.Vector3().fromBufferAttribute(posAttr, face.a);
+          const vB = new THREE.Vector3().fromBufferAttribute(posAttr, face.b);
+          const vC = new THREE.Vector3().fromBufferAttribute(posAttr, face.c);
+          const faceNormal = new THREE.Vector3()
+            .crossVectors(new THREE.Vector3().subVectors(vB, vA), new THREE.Vector3().subVectors(vC, vA))
+            .normalize();
+
+          if (_onRightClickModelCallback) {
+            _onRightClickModelCallback({
+              action: 'add_gate',
+              clientX: event.clientX,
+              clientY: event.clientY,
+              worldPoint: intersect.point,
+              localPoint: localPoint,
+              faceNormal: faceNormal
+            });
           }
         }
       }
@@ -338,6 +562,9 @@ const STLAnalyzer = (() => {
     const box = _geometry.boundingBox;
     const center = new THREE.Vector3();
     box.getCenter(center);
+
+    _vertexThickness = null;
+    computeWallThickness();
 
     // Vertex colors based on draft angle (passing positions for centroid check)
     const colors = computeDraftColors(stlData.positions, stlData.normals);
@@ -946,6 +1173,34 @@ const STLAnalyzer = (() => {
     // Build issues
     const issues = [];
 
+    if (_meltTemp < mat.TmMin) {
+      issues.push({
+        level: 'warning',
+        title: `수지 온도(Melt Temp) 낮음 (${_meltTemp}℃)`,
+        desc: `수지 권장 사출 온도(${mat.TmMin}~${mat.TmMax}℃)보다 낮아, 고점도로 인해 미성형(Short Shot) 위험이 발생할 수 있습니다.`
+      });
+    } else if (_meltTemp > mat.TmMax) {
+      issues.push({
+        level: 'warning',
+        title: `수지 온도(Melt Temp) 높음 (${_meltTemp}℃)`,
+        desc: `수지 권장 사출 온도(${mat.TmMin}~${mat.TmMax}℃)보다 높아, 탄화 및 플래시(Flash) 불량이 우려됩니다.`
+      });
+    }
+
+    if (_moldTemp < mat.TwMin) {
+      issues.push({
+        level: 'warning',
+        title: `금형 온도(Mold Temp) 낮음 (${_moldTemp}℃)`,
+        desc: `수지 권장 금형 온도(${mat.TwMin}~${mat.TwMax}℃)보다 낮아 표면 상태(웰드라인, 광택)가 불리해질 수 있습니다.`
+      });
+    } else if (_moldTemp > mat.TwMax) {
+      issues.push({
+        level: 'warning',
+        title: `금형 온도(Mold Temp) 높음 (${_moldTemp}℃)`,
+        desc: `수지 권장 금형 온도(${mat.TwMin}~${mat.TwMax}℃)보다 높아 냉각 속도가 지연되고 취출 시 수축 변형 우려가 있습니다.`
+      });
+    }
+
     issues.push({
       level: undercutPct < 5 ? 'ok' : undercutPct < 20 ? 'warning' : 'error',
       title: `언더컷 위험 면 ${undercutPct.toFixed(1)}%`,
@@ -1096,8 +1351,10 @@ const STLAnalyzer = (() => {
       moldFeatures.lifters.push({ dir: feat.dir, center: feat.center });
     });
 
+    const diagnostics = _getDiagnostics(minDim, maxDim, totalArea, matKey, mat);
+
     return {
-      issues, score, moldFeatures,
+      issues, score, moldFeatures, diagnostics,
       stats: { undercutPct, marginalPct, okPct, triCount, material: mat.name, shrinkRisk, isSimulated: stlData.isSimulated, metadata: stlData.metadata }
     };
   }
@@ -1237,6 +1494,12 @@ const STLAnalyzer = (() => {
     }
     _geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     _geometry.attributes.color.needsUpdate = true;
+
+    // Ensure vertex colors are enabled whenever an overlay is active
+    if (!_mesh.material.vertexColors) {
+      _mesh.material.vertexColors = true;
+      _mesh.material.color = new THREE.Color(0xffffff);
+    }
     _mesh.material.needsUpdate = true;
 
     if (_partingLineObj) {
@@ -1775,7 +2038,13 @@ const STLAnalyzer = (() => {
   }
 
   function clearDefectMarkers() {
-    _defectMarkers.forEach(m => _scene.remove(m));
+    _defectMarkers.forEach(m => {
+      if (m.parent) {
+        m.parent.remove(m);
+      } else {
+        _scene.remove(m);
+      }
+    });
     _defectMarkers = [];
   }
 
@@ -1853,13 +2122,13 @@ const STLAnalyzer = (() => {
     const color   = palette[index % palette.length];
 
     const geom = new THREE.ConeGeometry(coneRadius, coneHeight, 16);
-    geom.translate(0, coneHeight / 2, 0);
+    geom.translate(0, -coneHeight / 2, 0);
     const mat = new THREE.MeshPhongMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.4), shininess: 100 });
     const marker = new THREE.Mesh(geom, mat);
     marker.position.copy(localPoint);
 
     if (localNormal) {
-      marker.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), localNormal.clone().normalize());
+      marker.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), localNormal.clone().negate().normalize());
     }
 
     // Ring
@@ -1875,7 +2144,7 @@ const STLAnalyzer = (() => {
 
     // 번호 라벨
     const label = createTextSprite(`G${index + 1}`, `#${color.toString(16).padStart(6,'0')}`, avgDim * 0.09, false);
-    label.position.set(0, coneHeight * 1.6, 0);
+    label.position.set(0, -coneHeight * 1.6, 0);
     marker.add(label);
 
     _mesh.add(marker);
@@ -1897,7 +2166,7 @@ const STLAnalyzer = (() => {
       const x = positions[i], y = positions[i+1], z = positions[i+2];
       const vk = getVertKey(x, y, z);
       if (!graph[vk]) {
-        graph[vk] = { x, y, z, neighbors: new Set(), cell: getKey(x, y, z) };
+        graph[vk] = { x, y, z, neighbors: new Set(), cell: getKey(x, y, z), vertIdx: i / 3 };
       }
     }
 
@@ -2053,8 +2322,23 @@ const STLAnalyzer = (() => {
         const dx = neighNode.x - node.x;
         const dy = neighNode.y - node.y;
         const dz = neighNode.z - node.z;
-        const edgeLength = Math.sqrt(dx*dx + dy*dy + dz*dz);
-        const newDist = currDist + edgeLength;
+        const geomDist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+        
+        let resistance = 1.0;
+        if (_vertexThickness) {
+          const tNode = _vertexThickness[node.vertIdx] || 2.0;
+          const tNeigh = _vertexThickness[neighNode.vertIdx] || 2.0;
+          const avgThickness = Math.max(0.2, (tNode + tNeigh) / 2);
+          
+          const mat = MATERIAL_DB[_material] || MATERIAL_DB.ABS;
+          const tempDiff = mat.Tm - _meltTemp;
+          const viscRatio = Math.exp(6.0 * (tempDiff / mat.Tm));
+          
+          resistance = Math.pow(2.0 / avgThickness, 1.5) * Math.sqrt(viscRatio);
+          resistance = Math.max(0.1, Math.min(100.0, resistance));
+        }
+        
+        const newDist = currDist + geomDist * resistance;
         
         if (neighKey in distances && newDist < distances[neighKey]) {
           distances[neighKey] = newDist;
@@ -2065,7 +2349,212 @@ const STLAnalyzer = (() => {
     return distances;
   }
 
-  function predictDefects() {
+  function computeWeldLineSegments(graph, gateDistancesList, positions, normals) {
+    const segments = [];
+    if (gateDistancesList.length < 2) return segments;
+
+    const getVertKey = (x, y, z) => `${Math.round(x*1000)/1000},${Math.round(y*1000)/1000},${Math.round(z*1000)/1000}`;
+    const offsetVal = 0.5;
+
+    for (let i = 0; i < positions.length; i += 9) {
+      const pA = new THREE.Vector3(positions[i],   positions[i+1], positions[i+2]);
+      const pB = new THREE.Vector3(positions[i+3], positions[i+4], positions[i+5]);
+      const pC = new THREE.Vector3(positions[i+6], positions[i+7], positions[i+8]);
+
+      const nA = new THREE.Vector3(normals[i],   normals[i+1], normals[i+2]);
+      const nB = new THREE.Vector3(normals[i+3], normals[i+4], normals[i+5]);
+      const nC = new THREE.Vector3(normals[i+6], normals[i+7], normals[i+8]);
+
+      const kA = getVertKey(pA.x, pA.y, pA.z);
+      const kB = getVertKey(pB.x, pB.y, pB.z);
+      const kC = getVertKey(pC.x, pC.y, pC.z);
+
+      let gA = -1, dA = Infinity;
+      let gB = -1, dB = Infinity;
+      let gC = -1, dC = Infinity;
+
+      for (let g = 0; g < gateDistancesList.length; g++) {
+        const dists = gateDistancesList[g];
+        const distA = dists[kA] !== undefined ? dists[kA] : Infinity;
+        const distB = dists[kB] !== undefined ? dists[kB] : Infinity;
+        const distC = dists[kC] !== undefined ? dists[kC] : Infinity;
+
+        if (distA < dA) { dA = distA; gA = g; }
+        if (distB < dB) { dB = distB; gB = g; }
+        if (distC < dC) { dC = distC; gC = g; }
+      }
+
+      if (dA === Infinity || dB === Infinity || dC === Infinity) continue;
+      if (gA === gB && gB === gC) continue;
+
+      const getCrossingPoint = (pU, pV, nU, nV, kU, kV, gU, gV) => {
+        const distsU = gateDistancesList[gU];
+        const distsV = gateDistancesList[gV];
+
+        const dU_gU = distsU[kU] || 0;
+        const dU_gV = distsV[kU] || 0;
+        const dV_gU = distsU[kV] || 0;
+        const dV_gV = distsV[kV] || 0;
+
+        const valU = dU_gU - dU_gV;
+        const valV = dV_gU - dV_gV;
+
+        const denom = valV - valU;
+        if (Math.abs(denom) < 0.0001) return null;
+
+        const t = Math.max(0, Math.min(1, -valU / denom));
+        const p = new THREE.Vector3().lerpVectors(pU, pV, t);
+        const n = new THREE.Vector3().lerpVectors(nU, nV, t).normalize();
+        p.add(n.multiplyScalar(offsetVal));
+        return p;
+      };
+
+      const crossings = [];
+      if (gA !== gB) {
+        const p = getCrossingPoint(pA, pB, nA, nB, kA, kB, gA, gB);
+        if (p) crossings.push(p);
+      }
+      if (gB !== gC) {
+        const p = getCrossingPoint(pB, pC, nB, nC, kB, kC, gB, gC);
+        if (p) crossings.push(p);
+      }
+      if (gC !== gA) {
+        const p = getCrossingPoint(pC, pA, nC, nA, kC, kA, gC, gA);
+        if (p) crossings.push(p);
+      }
+
+      if (crossings.length >= 2) {
+        segments.push(crossings[0], crossings[1]);
+      }
+    }
+    return segments;
+  }
+
+  function _getDiagnostics(minDim, maxDim, totalArea, matKey, mat) {
+    if (!mat) mat = MATERIAL_DB[matKey] || MATERIAL_DB.ABS;
+    const meltMin = mat.TmMin;
+    const meltMax = mat.TmMax;
+    const moldMin = mat.TwMin;
+    const moldMax = mat.TwMax;
+
+    let meltStatus = 'ok';
+    if (_meltTemp < meltMin || _meltTemp > meltMax) {
+      meltStatus = 'warning';
+    }
+    let moldStatus = 'ok';
+    if (_moldTemp < moldMin || _moldTemp > moldMax) {
+      moldStatus = 'warning';
+    }
+
+    const tempDiff = mat.Tm - _meltTemp;
+    const viscRatio = Math.exp(6.0 * (tempDiff / mat.Tm));
+
+    const flowLength = (_gatePositions.length > 0 && _maxFlowDistance > 0) ? _maxFlowDistance : (maxDim * 0.7);
+    const tNom = Math.max(0.8, Math.min(8.0, minDim));
+
+    let deltaPMultiplier = 1.0;
+    let coolingTimeMultiplier = 1.0;
+    let gateRatio = 0.6;
+    let minGate = 0.8;
+    let maxGate = 2.5;
+
+    if (_runnerType === 'cold') {
+      deltaPMultiplier = 1.25;
+      coolingTimeMultiplier = 1.30;
+      gateRatio = 0.6;
+      minGate = 0.8;
+      maxGate = 2.5;
+    } else if (_runnerType === 'hot') {
+      deltaPMultiplier = 1.0;
+      coolingTimeMultiplier = 1.0;
+      gateRatio = 0.4;
+      minGate = 0.6;
+      maxGate = 1.6;
+    }
+
+    let deltaP = 0.065 * viscRatio * (_flowRate / 50.0) * Math.pow(flowLength / tNom, 1.7) * deltaPMultiplier;
+    deltaP = Math.max(5.0, Math.min(150.0, deltaP));
+
+    let wX = maxDim, wY = minDim;
+    if (_geometry) {
+      _geometry.computeBoundingBox();
+      const size = new THREE.Vector3();
+      _geometry.boundingBox.getSize(size);
+      if (_pullAxis === 'X') { wX = size.y; wY = size.z; }
+      else if (_pullAxis === 'Y') { wX = size.x; wY = size.z; }
+      else { wX = size.x; wY = size.y; }
+    }
+    const projArea = (wX * wY) * 0.01; 
+    const avgCavityPressure = deltaP * 0.35; 
+    let clampForce = projArea * avgCavityPressure * 0.10197 * 1.15;
+    clampForce = Math.max(1.0, clampForce);
+
+    const nominalThickness = Math.min(6.0, Math.max(1.0, minDim));
+    const coolingTime = calculateCoolingTime(nominalThickness, matKey) * coolingTimeMultiplier;
+
+    const suggestedGates = [];
+    if (_gatePositions.length > 0 && _adjacencyGraph && _vertexThickness) {
+      _gatePositions.forEach((gp, idx) => {
+        const nodeKey = findClosestGraphNode(gp, _adjacencyGraph);
+        if (nodeKey && _adjacencyGraph[nodeKey]) {
+          const tLocal = _vertexThickness[_adjacencyGraph[nodeKey].vertIdx] || minDim;
+          const dGate = Math.max(minGate, Math.min(maxGate, tLocal * gateRatio));
+          suggestedGates.push({ index: idx, diameter: dGate });
+        } else {
+          suggestedGates.push({ index: idx, diameter: minDim * gateRatio });
+        }
+      });
+    } else {
+      _gatePositions.forEach((gp, idx) => {
+        suggestedGates.push({ index: idx, diameter: minDim * gateRatio });
+      });
+    }
+
+    const volume = totalArea * tNom * 0.001; 
+    const fillingTime = Math.max(0.1, Math.min(10.0, volume / _flowRate));
+
+    return {
+      meltTemp: _meltTemp,
+      moldTemp: _moldTemp,
+      flowRate: _flowRate,
+      pressureLimit: _pressureLimit,
+      meltTempStatus: meltStatus,
+      moldTempStatus: moldStatus,
+      optimalMeltRange: [meltMin, meltMax],
+      optimalMoldRange: [moldMin, moldMax],
+      viscosityRatio: viscRatio,
+      estimatedPressureDrop: deltaP,
+      clampingForce: clampForce,
+      projectedArea: projArea,
+      maxCoolingTime: coolingTime,
+      suggestedGates: suggestedGates,
+      fillingTime: fillingTime
+    };
+  }
+
+  function setPhysicalParams(meltTemp, moldTemp, flowRate, pressureLimit) {
+    if (meltTemp !== undefined) _meltTemp = meltTemp;
+    if (moldTemp !== undefined) _moldTemp = moldTemp;
+    if (flowRate !== undefined) _flowRate = flowRate;
+    if (pressureLimit !== undefined) _pressureLimit = pressureLimit;
+  }
+
+  function calculateCoolingTime(thickness, materialKey) {
+    const mat = MATERIAL_DB[materialKey] || MATERIAL_DB.ABS;
+    const Tm = _meltTemp;
+    const Tw = _moldTemp;
+    const Te = mat.Te;
+    const alpha = mat.alpha; 
+
+    if (thickness <= 0.1) return 0;
+    const tempRatio = (4.0 / Math.PI) * ((Tm - Tw) / (Te - Tw));
+    if (tempRatio <= 0) return 1.0;
+    
+    const tc = (Math.pow(thickness, 2) / (Math.PI * Math.PI * alpha)) * Math.log(tempRatio);
+    return Math.max(0.5, tc);
+  }
+
+  function predictDefects(graph, gateDistancesList) {
     if (!_geometry || !_flowDistances || _gatePositions.length === 0) return [];
     const positions = _geometry.attributes.position.array;
     const normals   = _geometry.attributes.normal.array;
@@ -2080,7 +2569,10 @@ const STLAnalyzer = (() => {
     for (let i = 0; i < positions.length; i += 9) {
       const d = _flowDistances[i / 3];
       if (d === Infinity || d === undefined || d > 999999) {
-        unreachable.push({ pos: new THREE.Vector3(positions[i], positions[i+1], positions[i+2]) });
+        unreachable.push({
+          pos: new THREE.Vector3(positions[i], positions[i+1], positions[i+2]),
+          normal: new THREE.Vector3(normals[i], normals[i+1], normals[i+2])
+        });
       }
     }
     const airTrapClusters = [];
@@ -2090,7 +2582,7 @@ const STLAnalyzer = (() => {
         if (airTrapClusters.length >= 2) break;
       }
     }
-    airTrapClusters.forEach(v => defects.push({ type: 'air_trap', pos: v.pos, dist: Infinity }));
+    airTrapClusters.forEach(v => defects.push({ type: 'air_trap', pos: v.pos, normal: v.normal, dist: Infinity }));
 
     // ── 2. 에어 트랩: 미도달 없으면 오목한 심층 충진 구간 탐지 ──
     if (airTrapClusters.length === 0) {
@@ -2101,11 +2593,10 @@ const STLAnalyzer = (() => {
         if (d !== undefined && d !== Infinity && d > threshold) {
           const vPos = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
           const nx = normals[i], ny = normals[i+1], nz = normals[i+2];
-          // 법선이 모델 중심 방향을 향하면 오목(포켓) 구간
           const toCenter = modelCenter.clone().sub(vPos).normalize();
           const concavity = toCenter.dot(new THREE.Vector3(nx, ny, nz));
           if (concavity > 0.25) {
-            candidates.push({ pos: vPos, dist: d });
+            candidates.push({ pos: vPos, normal: new THREE.Vector3(nx, ny, nz), dist: d });
           }
         }
       }
@@ -2117,7 +2608,7 @@ const STLAnalyzer = (() => {
           if (distinct.length >= 2) break;
         }
       }
-      distinct.forEach(v => defects.push({ type: 'air_trap', pos: v.pos, dist: v.dist }));
+      distinct.forEach(v => defects.push({ type: 'air_trap', pos: v.pos, normal: v.normal, dist: v.dist }));
     }
 
     // ── 3. 웰드라인: 게이트 2개 이상일 때만 ──
@@ -2126,7 +2617,6 @@ const STLAnalyzer = (() => {
       _gatePositions.forEach(p => gateCenter.add(p));
       gateCenter.divideScalar(_gatePositions.length);
 
-      // 게이트 중심 근방에서 가장 높은 유동 거리를 가진 점 = 유동 합류 경계
       let bestWeldVert = null, minScore = Infinity;
       for (let i = 0; i < positions.length; i += 9) {
         const d = _flowDistances[i / 3];
@@ -2140,7 +2630,45 @@ const STLAnalyzer = (() => {
           }
         }
       }
-      if (bestWeldVert) defects.push({ type: 'weld_line', pos: bestWeldVert });
+      
+      const segments = (graph && gateDistancesList) ? computeWeldLineSegments(graph, gateDistancesList, positions, normals) : [];
+      if (bestWeldVert) {
+        defects.push({ type: 'weld_line', pos: bestWeldVert, segments });
+      }
+    }
+
+    // ── 4. 수축 (Sink Mark) 위험 영역 탐지 ──
+    if (_vertexThickness) {
+      let maxThick = 0;
+      for (let i = 0; i < _vertexThickness.length; i++) {
+        if (_vertexThickness[i] > maxThick) maxThick = _vertexThickness[i];
+      }
+      if (maxThick > 1.5) {
+        const threshold = maxThick * 0.82;
+        const candidates = [];
+        for (let i = 0; i < positions.length; i += 9) {
+          const t = _vertexThickness[i / 3];
+          if (t >= threshold) {
+            candidates.push({
+              pos: new THREE.Vector3(positions[i], positions[i+1], positions[i+2]),
+              normal: new THREE.Vector3(normals[i], normals[i+1], normals[i+2]),
+              thickness: t
+            });
+          }
+        }
+        candidates.sort((a, b) => b.thickness - a.thickness);
+        const distinct = [];
+        for (const c of candidates) {
+          if (distinct.every(d => c.pos.distanceTo(d.pos) >= 20)) {
+            distinct.push(c);
+            if (distinct.length >= 2) break;
+          }
+        }
+        distinct.forEach(d => {
+          const tc = calculateCoolingTime(d.thickness, _material);
+          defects.push({ type: 'shrinkage', pos: d.pos, normal: d.normal, thickness: d.thickness, coolingTime: tc });
+        });
+      }
     }
 
     return defects;
@@ -2150,31 +2678,93 @@ const STLAnalyzer = (() => {
     clearDefectMarkers();
     if (!_mesh) return;
     
+    _geometry.computeBoundingBox();
+    const modelSize = new THREE.Vector3();
+    _geometry.boundingBox.getSize(modelSize);
+    const avgDim = (modelSize.x + modelSize.y + modelSize.z) / 3;
+
     defects.forEach(def => {
       if (def.type === 'air_trap') {
-        const geom = new THREE.SphereGeometry(2.2, 16, 16);
-        const mat = new THREE.MeshPhongMaterial({ color: 0xff00ff, emissive: 0x550055 });
+        const normal = def.normal || new THREE.Vector3(0, 1, 0);
+        const ringRadius = Math.max(3.0, avgDim * 0.04);
+        
+        const geom = new THREE.RingGeometry(ringRadius * 0.8, ringRadius, 32);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff00ff, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
         const m = new THREE.Mesh(geom, mat);
+        
         const worldPos = def.pos.clone();
+        const worldNormal = normal.clone();
+        const normalMatrix = new THREE.Matrix3().getNormalMatrix(_mesh.matrixWorld);
+        worldNormal.applyMatrix3(normalMatrix).normalize();
+        
         _mesh.localToWorld(worldPos);
+        worldPos.add(worldNormal.clone().multiplyScalar(0.5));
         m.position.copy(worldPos);
         
+        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), worldNormal);
+        
         const label = createTextSprite('에어 트랩', '#ff00ff', 5);
-        label.position.set(0, 6, 0);
+        label.position.set(0, ringRadius * 1.2, 0);
         m.add(label);
         
         _scene.add(m);
         _defectMarkers.push(m);
       } else if (def.type === 'weld_line') {
-        const geom = new THREE.SphereGeometry(2.0, 16, 16);
-        const mat = new THREE.MeshPhongMaterial({ color: 0xffff00, emissive: 0x555500 });
+        if (def.segments && def.segments.length > 0) {
+          const geom = new THREE.BufferGeometry().setFromPoints(def.segments);
+          const mat = new THREE.LineBasicMaterial({
+            color: 0xffff00,
+            linewidth: 3,
+            depthWrite: false
+          });
+          const lineSegments = new THREE.LineSegments(geom, mat);
+          _mesh.add(lineSegments);
+          _defectMarkers.push(lineSegments);
+
+          const center = new THREE.Vector3();
+          def.segments.forEach(p => center.add(p));
+          center.divideScalar(def.segments.length);
+
+          const label = createTextSprite('웰드 라인', '#ffff00', 4);
+          label.position.copy(center).add(new THREE.Vector3(0, 4, 0));
+          _mesh.add(label);
+          _defectMarkers.push(label);
+        } else {
+          const geom = new THREE.SphereGeometry(2.0, 16, 16);
+          const mat = new THREE.MeshPhongMaterial({ color: 0xffff00, emissive: 0x555500 });
+          const m = new THREE.Mesh(geom, mat);
+          const worldPos = def.pos.clone();
+          _mesh.localToWorld(worldPos);
+          m.position.copy(worldPos);
+          
+          const label = createTextSprite('웰드 라인', '#ffff00', 4);
+          label.position.set(0, 6, 0);
+          m.add(label);
+          
+          _scene.add(m);
+          _defectMarkers.push(m);
+        }
+      } else if (def.type === 'shrinkage') {
+        const normal = def.normal || new THREE.Vector3(0, 1, 0);
+        const ringRadius = Math.max(3.5, avgDim * 0.045);
+        
+        const geom = new THREE.RingGeometry(ringRadius * 0.8, ringRadius, 32);
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff3300, side: THREE.DoubleSide, transparent: true, opacity: 0.85 });
         const m = new THREE.Mesh(geom, mat);
+        
         const worldPos = def.pos.clone();
+        const worldNormal = normal.clone();
+        const normalMatrix = new THREE.Matrix3().getNormalMatrix(_mesh.matrixWorld);
+        worldNormal.applyMatrix3(normalMatrix).normalize();
+        
         _mesh.localToWorld(worldPos);
+        worldPos.add(worldNormal.clone().multiplyScalar(0.5));
         m.position.copy(worldPos);
         
-        const label = createTextSprite('웰드 라인', '#ffff00', 4);
-        label.position.set(0, 6, 0);
+        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), worldNormal);
+        
+        const label = createTextSprite(`수축 (${def.thickness.toFixed(1)}mm / 냉각:${def.coolingTime ? def.coolingTime.toFixed(1) + 's' : '-'})`, '#ff3300', 4.5);
+        label.position.set(0, ringRadius * 1.25, 0);
         m.add(label);
         
         _scene.add(m);
@@ -2240,10 +2830,11 @@ const STLAnalyzer = (() => {
     return colors;
   }
 
-  /* 수축 위험 예측: 대향 법선 간의 거리 = 벽 두께 추정 → 소재 수축률 가중 */
-  function computeShrinkageColors(positions, normals) {
-    const colors = new Float32Array(positions.length);
-    const mat = MATERIAL_DB[_material] || MATERIAL_DB.ABS;
+  /* 수축 위험 예측: 대향 법선 간의 거리 = 벽 두께 추정 */
+  function computeWallThickness() {
+    if (!_geometry) return;
+    const positions = _geometry.attributes.position.array;
+    const normals   = _geometry.attributes.normal.array;
 
     _geometry.computeBoundingBox();
     const geoSize = new THREE.Vector3();
@@ -2262,7 +2853,7 @@ const STLAnalyzer = (() => {
       grid[key].push(i);
     }
 
-    const vertexThickness = new Float32Array(positions.length / 3);
+    _vertexThickness = new Float32Array(positions.length / 3);
 
     for (let i = 0; i < positions.length; i += 3) {
       const vx = positions[i], vy = positions[i + 1], vz = positions[i + 2];
@@ -2292,13 +2883,22 @@ const STLAnalyzer = (() => {
           }
         }
       }
-      vertexThickness[i / 3] = minDist === Infinity ? 0 : minDist;
+      _vertexThickness[i / 3] = minDist === Infinity ? 0 : minDist;
+    }
+  }
+
+  function computeShrinkageColors(positions, normals) {
+    const colors = new Float32Array(positions.length);
+    const mat = MATERIAL_DB[_material] || MATERIAL_DB.ABS;
+
+    if (!_vertexThickness) {
+      computeWallThickness();
     }
 
     // 최대 두께 정규화
     let maxThick = 0;
-    for (let i = 0; i < vertexThickness.length; i++) {
-      if (vertexThickness[i] > maxThick) maxThick = vertexThickness[i];
+    for (let i = 0; i < _vertexThickness.length; i++) {
+      if (_vertexThickness[i] > maxThick) maxThick = _vertexThickness[i];
     }
     if (maxThick < 0.001) maxThick = 1;
 
@@ -2306,7 +2906,7 @@ const STLAnalyzer = (() => {
     const shrinkWeight = Math.min(3.0, mat.shrink / 0.005);
 
     for (let i = 0; i < positions.length; i += 3) {
-      const thickness = vertexThickness[i / 3];
+      const thickness = _vertexThickness[i / 3];
       let r, g, b;
 
       if (thickness < 0.01) {
@@ -2349,32 +2949,58 @@ const STLAnalyzer = (() => {
 
     const getVertKey = (x, y, z) => `${Math.round(x*1000)/1000},${Math.round(y*1000)/1000},${Math.round(z*1000)/1000}`;
 
-    // 멀티 소스: 모든 게이트의 시작 키
-    const startKeys = _gatePositions
-      .map(gp => findClosestGraphNode(gp, graph))
-      .filter(k => k !== null);
-
-    const distances = startKeys.length > 0 ? calculateFlowDistances(startKeys, graph) : {};
-
+    // 멀티 소스 대안: 각 게이트별 도달 시간(Arrival Time = 거리 / 속도)을 개별 계산하여 합성
     const vertexCount = positions.length / 3;
-    _flowDistances = new Float32Array(vertexCount);
+    _flowDistances = new Float32Array(vertexCount).fill(Infinity);
     let maxDist = 0;
+
+    const gateArrivalsList = [];
+    _gatePositions.forEach((gp, gIdx) => {
+      const startKey = findClosestGraphNode(gp, graph);
+      if (startKey) {
+        const dists = calculateFlowDistances(startKey, graph);
+        const wVal = _gateVelocityRatios[gIdx] !== undefined ? _gateVelocityRatios[gIdx] : 1.0;
+        
+        // 도달 시간 맵 생성
+        const arrivals = {};
+        for (const key in dists) {
+          const d = dists[key];
+          arrivals[key] = (d !== Infinity && wVal > 0) ? (d / wVal) : Infinity;
+        }
+        gateArrivalsList.push(arrivals);
+      }
+    });
 
     for (let i = 0; i < positions.length; i += 3) {
       const k = getVertKey(positions[i], positions[i+1], positions[i+2]);
-      let d = distances[k];
-      if (d === undefined || d === Infinity) d = Infinity;
-      _flowDistances[i/3] = d;
-      if (d !== Infinity && d > maxDist) maxDist = d;
+      let minArrival = Infinity;
+      
+      gateArrivalsList.forEach(arrivals => {
+        const arrival = arrivals[k];
+        if (arrival !== undefined && arrival < minArrival) {
+          minArrival = arrival;
+        }
+      });
+
+      _flowDistances[i/3] = minArrival;
+      if (minArrival !== Infinity && minArrival > maxDist) {
+        maxDist = minArrival;
+      }
     }
     _maxFlowDistance = maxDist;
 
-    const defects = predictDefects();
+    // Weld line 및 air trap 결함 예측 시 물리 도달 시간 기준 합성맵 전달
+    const defects = predictDefects(graph, gateArrivalsList);
     createDefectMarkers(defects);
     _flowAnimationTime = 0;
     recolorGeometry();
 
-    return { maxFlowDistance: _maxFlowDistance, defects };
+    const minDim = Math.min(modelSize.x, modelSize.y, modelSize.z);
+    const maxDim = Math.max(modelSize.x, modelSize.y, modelSize.z);
+    const totalArea = (positions.length / 9) * 10; // estimate
+    const diagnostics = _getDiagnostics(minDim, maxDim, totalArea, _material);
+
+    return { maxFlowDistance: _maxFlowDistance, defects, diagnostics };
   }
 
   /* 게이트 추가 */
@@ -2397,7 +3023,8 @@ const STLAnalyzer = (() => {
       gateCount: _gatePositions.length,
       worldCoords: { x: worldPoint.x, y: worldPoint.y, z: worldPoint.z },
       maxFlowDistance: res.maxFlowDistance,
-      defects: res.defects
+      defects: res.defects,
+      diagnostics: res.diagnostics
     };
   }
 
@@ -2431,7 +3058,8 @@ const STLAnalyzer = (() => {
       worldCoords: { x: wp.x, y: wp.y, z: wp.z },
       maxFlowDistance: res.maxFlowDistance,
       defects: res.defects,
-      gateCount: _gatePositions.length
+      gateCount: _gatePositions.length,
+      diagnostics: res.diagnostics
     };
   }
 
@@ -2494,10 +3122,37 @@ const STLAnalyzer = (() => {
     });
   }
 
+  function getCanvas() {
+    return _renderer ? _renderer.domElement : null;
+  }
+
+  function onGateRepositioned(cb) {
+    _onGateRepositionedCallback = cb;
+  }
+
+  function onRightClickModel(cb) {
+    _onRightClickModelCallback = cb;
+  }
+
+  function setRunnerType(type) {
+    if (type === 'cold' || type === 'hot') {
+      _runnerType = type;
+    }
+  }
+
+  function setGateParams(index, velocityRatio, pressureRatio) {
+    if (index >= 0 && index < _gatePositions.length) {
+      if (velocityRatio !== undefined) _gateVelocityRatios[index] = velocityRatio;
+      if (pressureRatio !== undefined) _gatePressureRatios[index] = pressureRatio;
+      return recalculateFlow();
+    }
+    return null;
+  }
+
   /* ──────────────────────────────────────
      PUBLIC API
   ────────────────────────────────────── */
-  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights };
+  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights, getCanvas, onGateRepositioned, onRightClickModel, setPhysicalParams, calculateCoolingTime, setRunnerType, setGateParams };
 
 
 })();
