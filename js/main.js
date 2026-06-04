@@ -699,6 +699,20 @@ async function sendDataToPython() {
       if (data.vertex_temperatures) {
         STLAnalyzer.setVertexTemperatures(data.vertex_temperatures);
       }
+      if (data.vertex_fill_times) {
+        STLAnalyzer.setFlowDistances(data.vertex_fill_times);
+        let maxD = 0;
+        data.vertex_fill_times.forEach(d => {
+          if (d !== -1.0 && d > maxD) maxD = d;
+        });
+        STLAnalyzer.setMaxFlowDistance(maxD);
+      }
+      if (data.vertex_sink_risk) {
+        STLAnalyzer.setVertexSinkRisk(data.vertex_sink_risk);
+      }
+      if (data.weld_lines) {
+        STLAnalyzer.updateWeldLines(data.weld_lines);
+      }
       STLAnalyzer.recolorGeometry();
       return data;
     } else {

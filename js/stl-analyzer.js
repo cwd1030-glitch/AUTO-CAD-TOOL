@@ -24,6 +24,7 @@ const STLAnalyzer = (() => {
   let _gateNormals  = [];    // parallel array of face normals
   let _gateMarkers  = [];    // parallel array of THREE.Mesh markers
   let _defectMarkers = [];
+  let _lastDefects = [];
   let _flowOverlayActive = false;
   let _shrinkageOverlayActive = false;
   let _sinkOverlayActive = false;
@@ -3660,7 +3661,11 @@ const STLAnalyzer = (() => {
         // 복셀 해상도는 모델 크기에 비례하여 동적 조정 (평균 치수의 0.8% ~ 1.5% 수준)
         const resolution = Math.max(0.3, Math.min(2.5, diag * 0.008));
 
-        const res = await fetch(`/solve-flow-python?gates=${gatesStr}&resolution=${resolution}`, {
+        const coolingEnabled = (typeof App !== 'undefined' && App.stl && App.stl.coolingEnabled) || false;
+        const coolantTemp = document.getElementById('slide-mold-temp') ? parseFloat(document.getElementById('slide-mold-temp').value) : 25.0;
+        const meltTemp = document.getElementById('slide-melt-temp') ? parseFloat(document.getElementById('slide-melt-temp').value) : 230.0;
+
+        const res = await fetch(`/solve-flow-python?gates=${gatesStr}&resolution=${resolution}&cooling_enabled=${coolingEnabled}&coolant_temp=${coolantTemp}&melt_temp=${meltTemp}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/octet-stream'
@@ -3725,6 +3730,7 @@ const STLAnalyzer = (() => {
         });
 
         createDefectMarkers(defects);
+        _lastDefects = defects;
         _flowAnimationTime = 0;
         recolorGeometry();
 
@@ -3794,6 +3800,7 @@ const STLAnalyzer = (() => {
 
     const defects = predictDefects(graph, gateArrivalsList);
     createDefectMarkers(defects);
+    _lastDefects = defects;
     _flowAnimationTime = 0;
     recolorGeometry();
 
@@ -4258,6 +4265,40 @@ const STLAnalyzer = (() => {
     _scene.add(_warpArrow);
   }
 
+  function updateWeldLines(weldLines) {
+    const segments = [];
+    const weldDetails = [];
+    if (weldLines && weldLines.length > 0) {
+      weldLines.forEach(wl => {
+        const p = new THREE.Vector3(wl[0], wl[1], wl[2]);
+        segments.push(
+          p.clone().add(new THREE.Vector3(-0.8, 0, 0)),
+          p.clone().add(new THREE.Vector3(0.8, 0, 0))
+        );
+        weldDetails.push({
+          start: p,
+          end: p,
+          angle: 180,
+          severity: 'HIGH',
+          length: 1.6
+        });
+      });
+    }
+
+    const defects = [
+      { type: 'weld_line', pos: _gatePositions[0] ? _gatePositions[0].clone() : new THREE.Vector3(), segments, weldDetails }
+    ];
+
+    if (_lastDefects) {
+      _lastDefects.forEach(d => {
+        if (d.type !== 'weld_line') defects.push(d);
+      });
+    }
+    
+    _lastDefects = defects;
+    createDefectMarkers(defects);
+  }
+
   function computeSinkColors(positions, normals) {
     const colors = new Float32Array(positions.length);
     
@@ -4439,7 +4480,7 @@ const STLAnalyzer = (() => {
     return colors;
   }
 
-  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights, getCanvas, onGateRepositioned, onRightClickModel, setPhysicalParams, calculateCoolingTime, setRunnerType, setGateParams, toggleSinkOverlay, toggleWarpOverlay, toggleCoolingOverlay, setVertexTemperatures, setFlowDistances, setVertexSinkRisk, setMaxFlowDistance, predictSinkMarks, predictShrinkage, predictWarpage };
+  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights, getCanvas, onGateRepositioned, onRightClickModel, setPhysicalParams, calculateCoolingTime, setRunnerType, setGateParams, toggleSinkOverlay, toggleWarpOverlay, toggleCoolingOverlay, setVertexTemperatures, setFlowDistances, setVertexSinkRisk, setMaxFlowDistance, predictSinkMarks, predictShrinkage, predictWarpage, updateWeldLines };
 
 
 
