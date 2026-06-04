@@ -1050,20 +1050,20 @@ const STLAnalyzer = (() => {
       const isPhysicalUndercut = isUndercutMap ? isUndercutMap[triIdx] === 1 : false;
 
       if (isPhysicalUndercut) {
-        // ACTUAL UNDERCUT (RED)
-        r = 1.0; g = 0.15; b = 0.2;
+        // ACTUAL UNDERCUT (RED / MAX SEVERITY)
+        const c = getRainbowColor(1.0); r = c.r; g = c.g; b = c.b;
       } else if (absVal > 0.98) {
-        // Horizontal top/bottom (CYAN)
-        r = 0.1; g = 0.7; b = 0.9;
+        // Horizontal top/bottom (BLUE / SAFE)
+        const c = getRainbowColor(0.0); r = c.r; g = c.g; b = c.b;
       } else if (absVal < sin1) {
-        // INSUFFICIENT DRAFT (YELLOW/ORANGE)
-        r = 1.0; g = 0.75; b = 0.15;
+        // INSUFFICIENT DRAFT (ORANGE-RED / WARNING)
+        const c = getRainbowColor(0.8); r = c.r; g = c.g; b = c.b;
       } else if (absVal < sin3) {
-        // Marginal draft (YELLOW-GREEN)
-        r = 0.8; g = 0.9; b = 0.1;
+        // Marginal draft (YELLOW-GREEN / CAUTION)
+        const c = getRainbowColor(0.5); r = c.r; g = c.g; b = c.b;
       } else {
-        // Good draft (GREEN)
-        r = 0.0; g = 0.9; b = 0.45;
+        // Good draft (BLUE / SAFE)
+        const c = getRainbowColor(0.0); r = c.r; g = c.g; b = c.b;
       }
 
       colors[i] = r; colors[i+1] = g; colors[i+2] = b;
@@ -3466,6 +3466,28 @@ const STLAnalyzer = (() => {
     });
   }
 
+  function getRainbowColor(t) {
+    let r = 0, g = 0, b = 0;
+    const val = Math.max(0.0, Math.min(1.0, t));
+    if (val < 0.2) {
+      const s = val / 0.2;
+      r = 0.0; g = s; b = 1.0;
+    } else if (val < 0.4) {
+      const s = (val - 0.2) / 0.2;
+      r = 0.0; g = 1.0; b = 1.0 - s;
+    } else if (val < 0.6) {
+      const s = (val - 0.4) / 0.2;
+      r = s; g = 1.0; b = 0.0;
+    } else if (val < 0.8) {
+      const s = (val - 0.6) / 0.2;
+      r = 1.0; g = 1.0 - s * 0.5; b = 0.0;
+    } else {
+      const s = (val - 0.8) / 0.2;
+      r = 1.0; g = 0.5 - s * 0.5; b = 0.0;
+    }
+    return { r, g, b };
+  }
+
   /* Moldflow 표준 색상 스펙트럼: Blue→Cyan→Green→Yellow→Orange→Red
      t=0 (게이트/최초충진) → t=1 (최후충진/미성형 위험) */
   function computeFlowColors(positions, distances, maxDist, animPct) {
@@ -3483,30 +3505,9 @@ const STLAnalyzer = (() => {
         // 미충진 영역: 밝은 반투명 느낌의 회색 (Moldflow 스타일 캐비티 표현)
         r = 0.93; g = 0.93; b = 0.95;
       } else {
-        // 충진 시간 비율: 0 = 게이트(파랑), 1 = 최후충진(빨강)
         const t = maxDist > 0 ? Math.min(1.0, d / maxDist) : 0;
-
-        if (t < 0.2) {
-          // Blue → Cyan
-          const s = t / 0.2;
-          r = 0.0; g = s; b = 1.0;
-        } else if (t < 0.4) {
-          // Cyan → Green
-          const s = (t - 0.2) / 0.2;
-          r = 0.0; g = 1.0; b = 1.0 - s;
-        } else if (t < 0.6) {
-          // Green → Yellow
-          const s = (t - 0.4) / 0.2;
-          r = s; g = 1.0; b = 0.0;
-        } else if (t < 0.8) {
-          // Yellow → Orange
-          const s = (t - 0.6) / 0.2;
-          r = 1.0; g = 1.0 - s * 0.5; b = 0.0;
-        } else {
-          // Orange → Red
-          const s = (t - 0.8) / 0.2;
-          r = 1.0; g = 0.5 - s * 0.5; b = 0.0;
-        }
+        const color = getRainbowColor(t);
+        r = color.r; g = color.g; b = color.b;
 
         // 유동 전면(Flow Front) 발광 효과: 하얀 빛
         const distToFront = targetDist - d;
@@ -4306,13 +4307,8 @@ const STLAnalyzer = (() => {
       for (let i = 0; i < positions.length; i += 3) {
         const idx = i / 3;
         const val = _vertexSinkRisk[idx] !== undefined ? _vertexSinkRisk[idx] : 0.0;
-        let r = 0.15, g = 0.12, b = 0.1;
-        if (val > 0.7) {
-          r = 1.0; g = 0.5; b = 0.0;
-        } else if (val > 0.4) {
-          r = 0.65; g = 0.32; b = 0.0;
-        }
-        colors[i] = r; colors[i+1] = g; colors[i+2] = b;
+        const color = getRainbowColor(val);
+        colors[i] = color.r; colors[i+1] = color.g; colors[i+2] = color.b;
       }
       return colors;
     }
@@ -4331,13 +4327,14 @@ const STLAnalyzer = (() => {
     for (let i = 0; i < positions.length; i += 3) {
       const vertIdx = i / 3;
       const risk = nodeRisk[vertIdx];
-      let r = 0.15, g = 0.12, b = 0.1;
+      let val = 0.0;
       if (risk === 'HIGH') {
-        r = 1.0; g = 0.5; b = 0.0;
+        val = 1.0;
       } else if (risk === 'MEDIUM') {
-        r = 0.65; g = 0.32; b = 0.0;
+        val = 0.5;
       }
-      colors[i] = r; colors[i+1] = g; colors[i+2] = b;
+      const color = getRainbowColor(val);
+      colors[i] = color.r; colors[i+1] = color.g; colors[i+2] = color.b;
     }
     return colors;
   }
@@ -4362,10 +4359,10 @@ const STLAnalyzer = (() => {
       const vertIdx = i / 3;
       const val = nodeShrink[vertIdx] || baseShrink;
       const t = Math.max(0.0, Math.min(1.0, val / (baseShrink * 2.0)));
-      // Dark gray to Yellow interpolation
-      colors[i] = 0.2 + 0.8 * t; 
-      colors[i+1] = 0.2 + 0.8 * t; 
-      colors[i+2] = 0.2 * (1.0 - t);
+      const color = getRainbowColor(t);
+      colors[i] = color.r; 
+      colors[i+1] = color.g; 
+      colors[i+2] = color.b;
     }
     return colors;
   }
@@ -4459,23 +4456,10 @@ const STLAnalyzer = (() => {
       const tVal = temperatures[idx] !== undefined ? temperatures[idx] : minT;
       const t = Math.max(0.0, Math.min(1.0, (tVal - minT) / range));
       
-      let r = 0, g = 0, b = 0;
-      if (t < 0.25) {
-        const s = t / 0.25;
-        r = 0.0; g = s * 0.8; b = 1.0;
-      } else if (t < 0.5) {
-        const s = (t - 0.25) / 0.25;
-        r = 0.0; g = 0.8 + s * 0.2; b = 1.0 - s;
-      } else if (t < 0.75) {
-        const s = (t - 0.5) / 0.25;
-        r = s; g = 1.0; b = 0.0;
-      } else {
-        const s = (t - 0.75) / 0.25;
-        r = 1.0; g = 1.0 - s; b = 0.0;
-      }
-      colors[i] = r;
-      colors[i+1] = g;
-      colors[i+2] = b;
+      const color = getRainbowColor(t);
+      colors[i] = color.r;
+      colors[i+1] = color.g;
+      colors[i+2] = color.b;
     }
     return colors;
   }
