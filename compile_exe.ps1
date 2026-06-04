@@ -21,6 +21,7 @@ class DimaTrayApp : ApplicationContext {
     static string       _baseDir;
     static int          _port;
     static Mutex        _mutex;
+    static Process      _pyProcess;
     NotifyIcon          _tray;
 
     static readonly Dictionary<string,string> MimeMap =
@@ -94,11 +95,31 @@ class DimaTrayApp : ApplicationContext {
 
             new Thread(ServeLoop) { IsBackground = true, Name = "DIMA-HTTP" }.Start();
 
+            // Start Python Server in background
+            try {
+                string pyScript = Path.Combine(_baseDir, "server.py");
+                if (!File.Exists(pyScript)) {
+                    pyScript = Path.Combine(_baseDir, "backend", "server.py");
+                }
+                if (File.Exists(pyScript)) {
+                    var pyStart = new ProcessStartInfo {
+                        FileName = "python",
+                        Arguments = "\"" + pyScript + "\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    _pyProcess = Process.Start(pyStart);
+                }
+            } catch { }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new DimaTrayApp());
 
             // Cleanup on exit
+            if (_pyProcess != null && !_pyProcess.HasExited) {
+                try { _pyProcess.Kill(); } catch { }
+            }
             ReleaseMutex();
             try { File.Delete(Path.Combine(_baseDir, ".dima_port")); } catch { }
         }
@@ -231,6 +252,9 @@ class DimaTrayApp : ApplicationContext {
         _tray.Visible = false;
         try { _listener.Stop(); } catch { }
         try { File.Delete(Path.Combine(_baseDir, ".dima_port")); } catch { }
+        if (_pyProcess != null && !_pyProcess.HasExited) {
+            try { _pyProcess.Kill(); } catch { }
+        }
         ReleaseMutex();
         ExitThread();
     }
@@ -312,6 +336,73 @@ class DimaTrayApp : ApplicationContext {
                 return;
             }
 
+            // Python Voxel Flow Solver API
+            if (ctx.Request.HttpMethod == "POST" && urlPath == "/solve-flow-python") {
+                try {
+                    string gatesJson = ctx.Request.QueryString["gates"];
+                    double resolution = 0.5;
+                    double.TryParse(ctx.Request.QueryString["resolution"], out resolution);
+                    
+                    string coolingEnabled = ctx.Request.QueryString["cooling_enabled"] ?? "false";
+                    string coolantTemp = ctx.Request.QueryString["coolant_temp"] ?? "25.0";
+                    string meltTemp = ctx.Request.QueryString["melt_temp"] ?? "230.0";
+
+                    byte[] stlBytes;
+                    using (var ms = new MemoryStream()) {
+                        ctx.Request.InputStream.CopyTo(ms);
+                        stlBytes = ms.ToArray();
+                    }
+
+                    string tempDir = Path.Combine(Path.GetTempPath(), "DIMA");
+                    if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
+                    string tempStl = Path.Combine(tempDir, Guid.NewGuid().ToString() + ".stl");
+                    string tempGates = Path.Combine(tempDir, Guid.NewGuid().ToString() + ".json");
+                    File.WriteAllBytes(tempStl, stlBytes);
+                    File.WriteAllText(tempGates, gatesJson);
+
+                    // Execute solve_cli.py
+                    string pythonBackendDir = Path.Combine(_baseDir, "python_backend");
+                    string solveCliScript = Path.Combine(pythonBackendDir, "solve_cli.py");
+                    
+                    var startInfo = new ProcessStartInfo {
+                        FileName = "python",
+                        Arguments = "\"" + solveCliScript + "\" --stl \"" + tempStl + "\" --gates_file \"" + tempGates + "\" --resolution " + resolution.ToString(System.Globalization.CultureInfo.InvariantCulture) + " --cooling_enabled " + coolingEnabled + " --coolant_temp " + coolantTemp + " --melt_temp " + meltTemp,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+
+                    using (var proc = Process.Start(startInfo)) {
+                        string stdout = proc.StandardOutput.ReadToEnd();
+                        string stderr = proc.StandardError.ReadToEnd();
+                        proc.WaitForExit();
+
+                        if (proc.ExitCode == 0) {
+                            byte[] respBytes = System.Text.Encoding.UTF8.GetBytes(stdout);
+                            ctx.Response.ContentType = "application/json; charset=utf-8";
+                            ctx.Response.ContentLength64 = respBytes.Length;
+                            ctx.Response.OutputStream.Write(respBytes, 0, respBytes.Length);
+                            ctx.Response.StatusCode = 200;
+                        } else {
+                            throw new Exception("Python Solver failed: " + stderr);
+                        }
+                    }
+
+                    try { File.Delete(tempStl); } catch {}
+                    try { File.Delete(tempGates); } catch {}
+                }
+                catch (Exception ex) {
+                    ctx.Response.StatusCode = 500;
+                    byte[] errBytes = System.Text.Encoding.UTF8.GetBytes("Python Solver Error: " + ex.Message);
+                    ctx.Response.ContentType = "text/plain; charset=utf-8";
+                    ctx.Response.ContentLength64 = errBytes.Length;
+                    ctx.Response.OutputStream.Write(errBytes, 0, errBytes.Length);
+                }
+                ctx.Response.Close();
+                return;
+            }
+
             // CAD 백그라운드 프로세스 정리 API
             if (ctx.Request.HttpMethod == "POST" && urlPath == "/cleanup-cad") {
                 int killed = 0;
@@ -348,6 +439,8 @@ class DimaTrayApp : ApplicationContext {
                 ctx.Response.ContentType     = MimeMap.TryGetValue(ext, out mime) ? mime : "application/octet-stream";
                 ctx.Response.ContentLength64 = data.Length;
                 ctx.Response.Headers["Cache-Control"] = "no-cache";
+                ctx.Response.Headers.Add("Cross-Origin-Opener-Policy", "same-origin");
+                ctx.Response.Headers.Add("Cross-Origin-Embedder-Policy", "require-corp");
                 ctx.Response.OutputStream.Write(data, 0, data.Length);
                 ctx.Response.StatusCode = 200;
             } else {

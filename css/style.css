@@ -892,7 +892,8 @@ body {
   border-right: 2px solid var(--creo-border-cad);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .cad-model-tree-panel .panel-header, .cad-properties-panel .panel-header {
   background: var(--creo-bg-dark);
@@ -907,8 +908,6 @@ body {
   letter-spacing: 0.5px;
 }
 .model-tree-content {
-  flex: 1;
-  overflow-y: auto;
   padding: 10px;
   font-family: 'Segoe UI', sans-serif;
 }
@@ -1081,5 +1080,31 @@ body {
   background: var(--cyan);
   width: 6px;
   box-shadow: 0 0 10px var(--cyan);
+}
+
+/* Runner Button Style */
+.runner-btn {
+  background: var(--bg-glass);
+  border: 1px solid var(--creo-border-cad);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: center;
+  font-family: inherit;
+  transition: var(--transition);
+}
+.runner-btn:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: rgba(0, 212, 255, 0.05);
+}
+.runner-btn.active {
+  border-color: var(--cyan);
+  background: var(--cyan-dim);
+  color: var(--cyan);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.2);
 }
 

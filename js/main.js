@@ -635,10 +635,85 @@ document.querySelectorAll('.runner-btn').forEach(btn => {
   });
 });
 
-function triggerPhysicalReanalysis() {
+async function sendDataToPython() {
+  if (!App.stl.parsed || !App.stl.file) return;
+  
+  const gates = STLAnalyzer.getGatePositions().map((gp, gIdx) => {
+    return {
+      id: gIdx + 1,
+      coord: [gp.x, gp.y, gp.z],
+      speed_factor: App.stl.gateVelocityRatios && App.stl.gateVelocityRatios[gIdx] !== undefined ? App.stl.gateVelocityRatios[gIdx] : 1.0,
+      pressure_factor: 1.0,
+      time_delay: 0.0,
+      trigger_voxel: null
+    };
+  });
+  
+  const meltVal = parseInt($('slide-melt-temp').value);
+  const moldVal = parseInt($('slide-mold-temp').value);
+  const flowVal = parseInt($('slide-flow-rate').value);
+  
+  const arrayBuffer = await App.stl.file.arrayBuffer();
+  const base64Stl = await new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64data = reader.result.split(',')[1];
+      resolve(base64data);
+    };
+    reader.readAsDataURL(App.stl.file);
+  });
+
+  const coolingEnabled = App.stl.coolingEnabled || false;
+
+  const payload = {
+    stl_data: base64Stl,
+    gates: gates,
+    resolution: 0.5,
+    melt_temp: meltVal,
+    eject_temp: 80.0,
+    cooling_enabled: coolingEnabled,
+    coolant_temp: coolingEnabled ? moldVal : null,
+    coolant_flow: 10.0,
+    pitch: coolingEnabled ? 50.0 : null,
+    depth: 20.0,
+    diameter: 10.0
+  };
+
+  logToConsole('파이썬 백엔드로 사출/냉각 정밀 해석 요청 중...', 'info');
+  try {
+    const response = await fetch('http://127.0.0.1:5000/api/analyze', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP 오류: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    if (data.status === 'success') {
+      logToConsole('백엔드 정밀 해석 연산 완료!', 'success');
+      if (data.vertex_temperatures) {
+        STLAnalyzer.setVertexTemperatures(data.vertex_temperatures);
+      }
+      STLAnalyzer.recolorGeometry();
+      return data;
+    } else {
+      logToConsole(`해석 실패: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    logToConsole(`백엔드 통신 오류: ${err.message}`, 'error');
+  }
+}
+
+async function triggerPhysicalReanalysis() {
   if (App.stl.parsed) {
+    await sendDataToPython();
     if (STLAnalyzer.getGatePositions().length > 0) {
-      const flowRes = STLAnalyzer.recalculateFlow();
+      const flowRes = await STLAnalyzer.recalculateFlow();
       if (flowRes) {
         updateGateInfoPanel(flowRes);
         updateAnalysisIssuesWithGate(flowRes);
@@ -683,6 +758,63 @@ if (chkAutoRotate) {
       reRun3DAnalysis();
     }
   });
+}
+
+function renderDefectPredictionSummary(defects) {
+  if (!defects) {
+    const card = $('defect-summary-card-3d');
+    if (card) card.style.display = 'none';
+    return;
+  }
+  const sink = defects.sink;
+  const shrinkage = defects.shrinkage;
+  const warpage = defects.warpage;
+  
+  $('defect-summary-card-3d').style.display = 'block';
+  
+  const sinkRiskEl = $('defect-sink-risk');
+  sinkRiskEl.textContent = `${sink.severity} (개수: ${sink.count}개, 면적: ${sink.area}㎟)`;
+  sinkRiskEl.style.color = sink.severity === 'HIGH' ? '#ff4d6d' : (sink.severity === 'MEDIUM' ? '#ffd166' : '#00ffa3');
+
+  const shrinkRiskEl = $('defect-shrink-risk');
+  shrinkRiskEl.textContent = `${shrinkage.riskLevel} (최대: ${shrinkage.maxShrinkage.toFixed(2)}%, 평균: ${shrinkage.avgShrinkage.toFixed(2)}%)`;
+  shrinkRiskEl.style.color = shrinkage.riskLevel === 'HIGH' ? '#ff4d6d' : (shrinkage.riskLevel === 'MEDIUM' ? '#ffd166' : '#00ffa3');
+
+  const warpRiskEl = $('defect-warp-risk');
+  warpRiskEl.textContent = `${warpage.risk} (방향: ${warpage.direction}, 변위: ${warpage.magnitude.toFixed(2)}mm)`;
+  warpRiskEl.style.color = warpage.risk === 'HIGH' ? '#ff4d6d' : (warpage.risk === 'MEDIUM' ? '#ffd166' : '#00ffa3');
+
+  const critAreasEl = $('defect-critical-areas');
+  let criticalText = '';
+  if (sink.count > 0 || shrinkage.riskLevel !== 'LOW' || warpage.risk !== 'LOW') {
+    criticalText = `싱크마크 발생 우려지점 ${sink.count}개소`;
+    if (warpage.magnitude > 0.05) {
+      criticalText += `, ${warpage.direction} 방향 최대 변위부`;
+    }
+  } else {
+    criticalText = '눈에 띄는 집중 불량 영역 없음';
+  }
+  critAreasEl.textContent = criticalText;
+
+  const recoActionsEl = $('defect-reco-actions');
+  recoActionsEl.innerHTML = '';
+  const actions = new Set();
+  
+  if (sink.recommendations) sink.recommendations.forEach(r => actions.add(r));
+  if (shrinkage.recommendations) shrinkage.recommendations.forEach(r => actions.add(r));
+  if (warpage.recommendations) warpage.recommendations.forEach(r => actions.add(r));
+  
+  if (actions.size === 0) {
+    actions.add('현재 사출/금형 구조 설계 유지 권장');
+  }
+  actions.forEach(act => {
+    const li = document.createElement('li');
+    li.textContent = act;
+    recoActionsEl.appendChild(li);
+  });
+
+  const confidence = Math.max(75, 100 - (sink.count * 1.5) - (warpage.score * 0.2));
+  $('defect-confidence-score').textContent = `신뢰도: ${Math.round(confidence)}%`;
 }
 
 async function reRun3DAnalysis() {
@@ -731,14 +863,63 @@ async function reRun3DAnalysis() {
   animateScore('score-num-3d', 'ring-fill-3d', 'score-grade-3d', result.score);
   renderMoldFeatures(result.moldFeatures);
   renderIssues('issues-list-3d', result.issues);
+  
+  if (result.defects) {
+    renderDefectPredictionSummary(result.defects);
+  }
+
+  
+  // 최적 성형방향 추천 UI 반영
+  if (result.recommendation) {
+    const reco = result.recommendation;
+    const bestScoreMap = reco.scoresMap[reco.bestDirection] || {};
+
+    $('recommendation-info-3d').style.display = 'flex';
+    $('reco-direction').textContent = `${reco.bestDirection} 방향 (권장)`;
+    $('reco-confidence').textContent = `${reco.confidence}%`;
+    $('reco-complexity').textContent = `${reco.complexityScore}점 (${reco.complexityLevel})`;
+    
+    $('reco-proj-area').textContent = `${(bestScoreMap.projectedArea / 100).toFixed(1)} ㎠`;
+    $('reco-undercut-area').textContent = `${Math.round(bestScoreMap.undercutArea).toLocaleString()} ㎟`;
+    $('reco-slides').textContent = `${bestScoreMap.slideCount} 개`;
+    $('reco-lifters').textContent = `${bestScoreMap.lifterCount} 개`;
+
+    if (App.stl.pullAxis === 'AUTO') {
+      const cleanAxis = reco.bestDirection.replace(/[^XYZ]/g, '');
+      const cleanFlip = reco.bestDirection.startsWith('-');
+      
+      App.stl.pullAxis = cleanAxis;
+      App.stl.flipAxis = cleanFlip;
+
+      document.querySelectorAll('.axis-btn').forEach(btn => {
+        if (btn.getAttribute('data-axis') === cleanAxis) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+      
+      const flipBtn = $('btn-flip-axis');
+      if (flipBtn) {
+        flipBtn.classList.toggle('active', cleanFlip);
+      }
+
+      STLAnalyzer.setPullAxis(cleanAxis);
+      STLAnalyzer.setFlipAxis(cleanFlip);
+      STLAnalyzer.recolorGeometry();
+      logToConsole(`[AUTO 엔진] 최적 성형방향인 ${reco.bestDirection} 축으로 추천 성형 방향이 자동 적용되었습니다.`, 'success');
+    }
+  } else {
+    $('recommendation-info-3d').style.display = 'none';
+  }
+
   if (result.diagnostics) {
     updateDiagnosticsPanel(result.diagnostics);
   }
 
-  STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+  await STLAnalyzer.updateCoreHelpers(App.stl.showCores);
   STLAnalyzer.updatePartingLine(App.stl.showParting, parseInt($('parting-slider').value));
   setStatus('ready', '3D 분석 완료');
-  showToast(`탈형 축/소재 재분석 완료`, 'ok');
   logToConsole(`3D 모델 재분석 완료. 새로운 양산성 점수: ${result.score}/100`, 'success');
 }
 
@@ -938,7 +1119,7 @@ async function run3DAnalysis() {
 
     STLAnalyzer.setPullAxis(App.stl.pullAxis);
     STLAnalyzer.loadGeometry(stlData);
-    STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+    await STLAnalyzer.updateCoreHelpers(App.stl.showCores);
     STLAnalyzer.updatePartingLine(App.stl.showParting, 50);
 
     // Analysis
@@ -959,6 +1140,59 @@ async function run3DAnalysis() {
     animateScore('score-num-3d', 'ring-fill-3d', 'score-grade-3d', result.score);
     renderMoldFeatures(result.moldFeatures);
     renderIssues('issues-list-3d', result.issues);
+
+    // 통합 결함 예측 요약 (Defect Prediction Summary Card) 반영
+    if (result.defects) {
+      renderDefectPredictionSummary(result.defects);
+    }
+    
+    // 최적 성형방향 추천 UI 반영
+    if (result.recommendation) {
+      const reco = result.recommendation;
+      const bestScoreMap = reco.scoresMap[reco.bestDirection] || {};
+
+      $('recommendation-info-3d').style.display = 'flex';
+      $('reco-direction').textContent = `${reco.bestDirection} 방향 (권장)`;
+      $('reco-confidence').textContent = `${reco.confidence}%`;
+      $('reco-complexity').textContent = `${reco.complexityScore}점 (${reco.complexityLevel})`;
+      
+      // 추가 요구사항 파라미터 매핑
+      $('reco-proj-area').textContent = `${(bestScoreMap.projectedArea / 100).toFixed(1)} ㎠`;
+      $('reco-undercut-area').textContent = `${Math.round(bestScoreMap.undercutArea).toLocaleString()} ㎟`;
+      $('reco-slides').textContent = `${bestScoreMap.slideCount} 개`;
+      $('reco-lifters').textContent = `${bestScoreMap.lifterCount} 개`;
+
+      // 만약 AUTO 모드 상태라면 최적 추천 방향을 자동으로 모델 뷰어와 설정에 대입합니다.
+      if (App.stl.pullAxis === 'AUTO') {
+        const cleanAxis = reco.bestDirection.replace(/[^XYZ]/g, '');
+        const cleanFlip = reco.bestDirection.startsWith('-');
+        
+        App.stl.pullAxis = cleanAxis;
+        App.stl.flipAxis = cleanFlip;
+
+        // UI 상태 동기화
+        document.querySelectorAll('.axis-btn').forEach(btn => {
+          if (btn.getAttribute('data-axis') === cleanAxis) {
+            btn.classList.add('active');
+          } else {
+            btn.classList.remove('active');
+          }
+        });
+        
+        const flipBtn = $('btn-flip-axis');
+        if (flipBtn) {
+          flipBtn.classList.toggle('active', cleanFlip);
+        }
+
+        STLAnalyzer.setPullAxis(cleanAxis);
+        STLAnalyzer.setFlipAxis(cleanFlip);
+        STLAnalyzer.recolorGeometry();
+        logToConsole(`[AUTO 엔진] 최적 성형방향인 ${reco.bestDirection} 축으로 추천 성형 방향이 자동 적용되었습니다.`, 'success');
+      }
+    } else {
+      $('recommendation-info-3d').style.display = 'none';
+    }
+
     if (result.diagnostics) {
       updateDiagnosticsPanel(result.diagnostics);
     }
@@ -1052,18 +1286,26 @@ $('btn-solid').addEventListener('click', () => {
   logToConsole('디스플레이 모드 변경: 솔리드 쉐이딩(Solid Shading)', 'info');
 });
 
-// Overlays (Draft, Flow, Shrinkage)
+// Overlays (Draft, Flow, Shrinkage, Sink Mark, Warpage)
 $('btn-draft-overlay').addEventListener('click', function() {
-  document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.tool-btn').forEach(btn => {
+    if (btn.id !== 'btn-cooling-overlay') btn.classList.remove('active');
+  });
   this.classList.add('active');
   STLAnalyzer.toggleFlowOverlay(false);
   STLAnalyzer.toggleShrinkageOverlay(false);
+  STLAnalyzer.toggleSinkOverlay(false);
+  STLAnalyzer.toggleWarpOverlay(false);
   STLAnalyzer.toggleOverlay(true);
   const chk = $('tree-chk-draft'); if (chk) chk.checked = true;
 
   $('legend-draft').style.display = 'flex';
   $('legend-flow').style.display = 'none';
   $('legend-shrinkage').style.display = 'none';
+  $('legend-weld').style.display = 'none';
+  $('legend-airtrap').style.display = 'none';
+  $('legend-sink').style.display = 'none';
+  $('legend-warp').style.display = 'none';
   $('flow-controls').style.display = 'none';
   logToConsole('해석 오버레이 변경: 구배각 검사(Draft Angle)', 'info');
 });
@@ -1074,14 +1316,22 @@ $('btn-flow-overlay').addEventListener('click', function() {
     $('btn-set-gate').click();
     return;
   }
-  document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.tool-btn').forEach(btn => {
+    if (btn.id !== 'btn-cooling-overlay') btn.classList.remove('active');
+  });
   this.classList.add('active');
   STLAnalyzer.toggleFlowOverlay(true);
+  STLAnalyzer.toggleSinkOverlay(false);
+  STLAnalyzer.toggleWarpOverlay(false);
   const chk = $('tree-chk-draft'); if (chk) chk.checked = false;
 
   $('legend-draft').style.display = 'none';
   $('legend-flow').style.display = 'flex';
   $('legend-shrinkage').style.display = 'none';
+  $('legend-weld').style.display = 'flex';
+  $('legend-airtrap').style.display = 'flex';
+  $('legend-sink').style.display = 'none';
+  $('legend-warp').style.display = 'none';
   $('flow-controls').style.display = 'flex';
   logToConsole('해석 오버레이 변경: 사출 유동 시뮬레이션(Moldflow)', 'info');
 });
@@ -1092,17 +1342,25 @@ $('btn-shrink-overlay').addEventListener('click', function() {
     return;
   }
   const isActive = this.classList.contains('active');
-  document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.tool-btn').forEach(btn => {
+    if (btn.id !== 'btn-cooling-overlay') btn.classList.remove('active');
+  });
 
   if (!isActive) {
     this.classList.add('active');
     showToast('수축 위험 예측 계산 중...', 'info');
     STLAnalyzer.toggleShrinkageOverlay(true);
+    STLAnalyzer.toggleSinkOverlay(false);
+    STLAnalyzer.toggleWarpOverlay(false);
     const chk = $('tree-chk-draft'); if (chk) chk.checked = false;
 
     $('legend-draft').style.display = 'none';
     $('legend-flow').style.display = 'none';
     $('legend-shrinkage').style.display = 'flex';
+    $('legend-weld').style.display = 'none';
+    $('legend-airtrap').style.display = 'none';
+    $('legend-sink').style.display = 'none';
+    $('legend-warp').style.display = 'none';
     $('flow-controls').style.display = 'none';
     showToast(`${App.stl.material} 수축 위험 예측 활성화`, 'ok');
     logToConsole(`해석 오버레이 변경: ${App.stl.material} 수축 예측(Shrinkage)`, 'info');
@@ -1115,7 +1373,119 @@ $('btn-shrink-overlay').addEventListener('click', function() {
     $('legend-draft').style.display = 'flex';
     $('legend-flow').style.display = 'none';
     $('legend-shrinkage').style.display = 'none';
+    $('legend-weld').style.display = 'none';
+    $('legend-airtrap').style.display = 'none';
+    $('legend-sink').style.display = 'none';
+    $('legend-warp').style.display = 'none';
   }
+});
+
+$('btn-sink-overlay').addEventListener('click', function() {
+  if (!App.stl.parsed) {
+    showToast('3D 모델을 먼저 분석하세요.', 'warn');
+    return;
+  }
+  const isActive = this.classList.contains('active');
+  document.querySelectorAll('.tool-btn').forEach(btn => {
+    if (btn.id !== 'btn-cooling-overlay') btn.classList.remove('active');
+  });
+
+  if (!isActive) {
+    this.classList.add('active');
+    STLAnalyzer.toggleSinkOverlay(true);
+    const chk = $('tree-chk-draft'); if (chk) chk.checked = false;
+
+    $('legend-draft').style.display = 'none';
+    $('legend-flow').style.display = 'none';
+    $('legend-shrinkage').style.display = 'none';
+    $('legend-weld').style.display = 'none';
+    $('legend-airtrap').style.display = 'none';
+    $('legend-sink').style.display = 'flex';
+    $('legend-warp').style.display = 'none';
+    $('flow-controls').style.display = 'none';
+    showToast('싱크마크 분포 및 위험도 가시화', 'ok');
+    logToConsole('해석 오버레이 변경: 싱크마크 예측(Sink Mark)', 'info');
+  } else {
+    $('btn-draft-overlay').classList.add('active');
+    STLAnalyzer.toggleSinkOverlay(false);
+    STLAnalyzer.toggleOverlay(true);
+    const chk = $('tree-chk-draft'); if (chk) chk.checked = true;
+
+    $('legend-draft').style.display = 'flex';
+    $('legend-flow').style.display = 'none';
+    $('legend-shrinkage').style.display = 'none';
+    $('legend-weld').style.display = 'none';
+    $('legend-airtrap').style.display = 'none';
+    $('legend-sink').style.display = 'none';
+    $('legend-warp').style.display = 'none';
+  }
+});
+
+$('btn-warp-overlay').addEventListener('click', function() {
+  if (!App.stl.parsed) {
+    showToast('3D 모델을 먼저 분석하세요.', 'warn');
+    return;
+  }
+  const isActive = this.classList.contains('active');
+  document.querySelectorAll('.tool-btn').forEach(btn => {
+    if (btn.id !== 'btn-cooling-overlay') btn.classList.remove('active');
+  });
+
+  if (!isActive) {
+    this.classList.add('active');
+    STLAnalyzer.toggleWarpOverlay(true);
+    const chk = $('tree-chk-draft'); if (chk) chk.checked = false;
+
+    $('legend-draft').style.display = 'none';
+    $('legend-flow').style.display = 'none';
+    $('legend-shrinkage').style.display = 'none';
+    $('legend-weld').style.display = 'none';
+    $('legend-airtrap').style.display = 'none';
+    $('legend-sink').style.display = 'none';
+    $('legend-warp').style.display = 'flex';
+    $('flow-controls').style.display = 'none';
+    showToast('변형 방향 벡터 및 변형량 가시화', 'ok');
+    logToConsole('해석 오버레이 변경: 변형 예측(Warpage)', 'info');
+  } else {
+    $('btn-draft-overlay').classList.add('active');
+    STLAnalyzer.toggleWarpOverlay(false);
+    STLAnalyzer.toggleOverlay(true);
+    const chk = $('tree-chk-draft'); if (chk) chk.checked = true;
+
+    $('legend-draft').style.display = 'flex';
+    $('legend-flow').style.display = 'none';
+    $('legend-shrinkage').style.display = 'none';
+    $('legend-weld').style.display = 'none';
+    $('legend-airtrap').style.display = 'none';
+    $('legend-sink').style.display = 'none';
+    $('legend-warp').style.display = 'none';
+  }
+});
+
+$('btn-cooling-overlay').addEventListener('click', function() {
+  if (!App.stl.parsed) {
+    showToast('3D 모델을 먼저 분석하세요.', 'warn');
+    return;
+  }
+  const isActive = this.classList.contains('active');
+  this.classList.toggle('active');
+  
+  const isNowActive = !isActive;
+  App.stl.coolingEnabled = isNowActive;
+  
+  STLAnalyzer.toggleCoolingOverlay(isNowActive);
+  
+  if (isNowActive) {
+    $('legend-cooling').style.display = 'flex';
+    showToast('금형 냉각 시스템 및 해석 활성화 (❄️)', 'ok');
+    logToConsole('금형 냉각 연계 해석 모드가 활성화되었습니다.', 'success');
+  } else {
+    $('legend-cooling').style.display = 'none';
+    showToast('금형 냉각 시스템 및 해석 비활성화', 'info');
+    logToConsole('금형 냉각 해석 모드가 비활성화되었습니다.', 'info');
+  }
+  
+  triggerPhysicalReanalysis();
 });
 
 // Set Gate
@@ -1209,10 +1579,10 @@ $('flow-slider').addEventListener('input', (e) => {
   STLAnalyzer.setFlowAnimationTime(flowAnimPct / 100);
 });
 
-function handleViewerClick(e) {
+async function handleViewerClick(e) {
   if (!STLAnalyzer.isGateSettingMode()) return;
 
-  const result = STLAnalyzer.onViewerClick(e);
+  const result = await STLAnalyzer.onViewerClick(e);
   if (!result) return;
 
   if (result.action === 'remove_gate') {
@@ -1225,7 +1595,7 @@ function handleViewerClick(e) {
       showToast('모든 게이트가 제거되었습니다.', 'info');
       logToConsole('모든 게이트 주입구가 제거되었습니다.', 'warning');
     } else {
-      const flowRes = STLAnalyzer.recalculateFlow();
+      const flowRes = await STLAnalyzer.recalculateFlow();
       if (flowRes) {
         updateGateInfoPanel(flowRes);
         updateAnalysisIssuesWithGate(flowRes);
@@ -1374,13 +1744,13 @@ function updateGateInfoPanel(result) {
     };
     
     slider.addEventListener('input', updateDisplay);
-    slider.addEventListener('change', () => {
+    slider.addEventListener('change', async () => {
       const val = parseInt(slider.value) / 100;
       if (!App.stl.gateVelocityRatios) App.stl.gateVelocityRatios = [];
       App.stl.gateVelocityRatios[idx] = val;
       
       // Update in STLAnalyzer
-      const flowRes = STLAnalyzer.setGateParams(idx, val, undefined);
+      const flowRes = await STLAnalyzer.setGateParams(idx, val, undefined);
       if (flowRes) {
         updateAnalysisIssuesWithGate(flowRes);
       }
@@ -1445,21 +1815,100 @@ function updateAnalysisIssuesWithGate(gateResult) {
   }
   
   const airTraps = gateResult.defects.filter(d => d.type === 'air_trap');
-  if (airTraps.length > 0) {
-    issues.push({
-      level: 'warning',
-      title: `⚠ 에어 트랩 위험 ${airTraps.length}곳 감지 (자홍색 마커)`,
-      desc: `충진 말기 포켓 구간에 가스가 갇힐 위험이 있습니다. 해당 위치에 가스 배출구(Gas Vent) 또는 게이트 위치 조정을 권장합니다.`
-    });
+  let airtrapCount = airTraps.length;
+  let airtrapHighRiskCount = airTraps.filter(d => d.riskLevel === 'HIGH').length;
+  let airtrapMedCount = airTraps.filter(d => d.riskLevel === 'MEDIUM').length;
+  let airtrapLowCount = airTraps.filter(d => d.riskLevel === 'LOW').length;
+  let airtrapSeverityScore = airtrapCount > 0
+    ? Math.round((airtrapHighRiskCount * 100 + airtrapMedCount * 50 + airtrapLowCount * 10) / airtrapCount)
+    : 0;
+
+  App.stl.airtrapStats = {
+    airtrapCount,
+    airtrapHighRiskCount,
+    airtrapSeverityScore
+  };
+
+  const airtrapCard = $('airtrap-info-3d');
+  if (airtrapCard) {
+    if (airtrapCount > 0) {
+      airtrapCard.style.display = 'block';
+      $('airtrap-count').textContent = `${airtrapCount} 개`;
+      $('airtrap-high-risk').textContent = `${airtrapHighRiskCount} 개`;
+      $('airtrap-severity-score').textContent = `${airtrapSeverityScore} 점`;
+    } else {
+      airtrapCard.style.display = 'none';
+    }
+  }
+
+  if (airtrapCount > 0) {
+    if (airtrapHighRiskCount > 0) {
+      issues.push({
+        level: 'error',
+        title: `⚠ 고위험 에어 트랩 (${airtrapHighRiskCount}개 감지)`,
+        desc: `충진 말기 공기 배출이 어려운 고위험 에어트랩이 감지되었습니다. 금형 코어 분할부(Parting)로 게이트를 이동하거나 에어 벤트 추가 설치를 권장합니다.`
+      });
+    } else {
+      issues.push({
+        level: 'warning',
+        title: `⚠ 에어 트랩 위험 구간 (${airtrapCount}개 감지)`,
+        desc: `충진 말기 가스가 갇힐 위험이 있습니다. 가스 배출구(Gas Vent) 또는 게이트 조정을 권장합니다.`
+      });
+    }
   }
 
   const weldLines = gateResult.defects.filter(d => d.type === 'weld_line');
-  if (weldLines.length > 0) {
-    issues.push({
-      level: 'warning',
-      title: `⚠ 웰드라인 합류 구간 예측 (노란색 마커)`,
-      desc: `다중 게이트에서 유동이 만나는 지점에 웰드라인이 형성됩니다. 강도 저하 우려 지점으로 설계 검토를 권장합니다.`
+  let weldCount = 0;
+  let highRiskCount = 0;
+  let weldSeverityScore = 0;
+
+  if (weldLines.length > 0 && weldLines[0].weldDetails) {
+    const details = weldLines[0].weldDetails;
+    weldCount = details.length;
+    details.forEach(d => {
+      if (d.severity === 'HIGH') {
+        highRiskCount++;
+      }
     });
+    const medCount = details.filter(d => d.severity === 'MEDIUM').length;
+    const lowCount = details.filter(d => d.severity === 'LOW').length;
+    weldSeverityScore = weldCount > 0 
+      ? Math.round((highRiskCount * 100 + medCount * 50 + lowCount * 10) / weldCount)
+      : 0;
+  }
+
+  App.stl.weldStats = {
+    weldCount,
+    highRiskCount,
+    weldSeverityScore
+  };
+
+  const weldCard = $('weld-info-3d');
+  if (weldCard) {
+    if (weldCount > 0) {
+      weldCard.style.display = 'block';
+      $('weld-count').textContent = `${weldCount} 개`;
+      $('weld-high-risk').textContent = `${highRiskCount} 개`;
+      $('weld-severity-score').textContent = `${weldSeverityScore} 점`;
+    } else {
+      weldCard.style.display = 'none';
+    }
+  }
+
+  if (weldCount > 0) {
+    if (highRiskCount > 0) {
+      issues.push({
+        level: 'error',
+        title: `⚠ 고위험 웰드라인 합류 (${highRiskCount}개 감지)`,
+        desc: `유동 선단 만나는 각도 135도 이상의 고위험 웰드라인이 감지되었습니다. 취약 구조 방지를 위해 게이트 위치 변경을 검토해 주십시오.`
+      });
+    } else {
+      issues.push({
+        level: 'warning',
+        title: `⚠ 웰드라인 합류 구간 예측 (${weldCount}개 감지)`,
+        desc: `다중 게이트에서 유동이 만나는 지점에 웰드라인이 형성됩니다. 강도 저하 우려 지점으로 설계 검토를 권장합니다.`
+      });
+    }
   }
   
   // calculate score
@@ -1471,14 +1920,14 @@ function updateAnalysisIssuesWithGate(gateResult) {
   renderIssues('issues-list-3d', issues);
 }
 
-$('btn-core-overlay').addEventListener('click', function() {
+$('btn-core-overlay').addEventListener('click', async function() {
   if (!App.stl.parsed) {
     showToast('3D 모델을 먼저 분석하세요.', 'warn');
     return;
   }
   App.stl.showCores = !App.stl.showCores;
   try {
-    STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+    await STLAnalyzer.updateCoreHelpers(App.stl.showCores);
   } catch (err) {
     console.error('Core helper error:', err);
     logToConsole(`[에러] 코어 가이드 표시 중 오류: ${err.message}`, 'error');
@@ -1496,16 +1945,41 @@ $('btn-core-overlay').addEventListener('click', function() {
     logToConsole('금형 언더컷 코어 가이드 표시: OFF', 'info');
   }
 });
+let _currentPartingMode = 'manual';
+
 $('btn-parting-overlay').addEventListener('click', function() {
   App.stl.showParting = !App.stl.showParting;
   const sliderVal = parseInt($('parting-slider').value);
-  STLAnalyzer.updatePartingLine(App.stl.showParting, sliderVal);
+  STLAnalyzer.updatePartingLine(App.stl.showParting, sliderVal, _currentPartingMode);
   this.classList.toggle('active', App.stl.showParting);
   if (App.stl.showParting) {
     $('parting-controls').style.display = 'flex';
   } else {
     $('parting-controls').style.display = 'none';
   }
+});
+
+$('btn-parting-manual').addEventListener('click', function() {
+  _currentPartingMode = 'manual';
+  this.classList.add('active');
+  $('btn-parting-auto').classList.remove('active');
+  $('parting-slider-container').style.display = 'flex';
+  if (App.stl.showParting) {
+    const sliderVal = parseInt($('parting-slider').value);
+    STLAnalyzer.updatePartingLine(true, sliderVal, 'manual');
+  }
+  showToast('수동 평면 파팅 모드 활성화', 'info');
+});
+
+$('btn-parting-auto').addEventListener('click', function() {
+  _currentPartingMode = 'auto';
+  this.classList.add('active');
+  $('btn-parting-manual').classList.remove('active');
+  $('parting-slider-container').style.display = 'none';
+  if (App.stl.showParting) {
+    STLAnalyzer.updatePartingLine(true, undefined, 'auto');
+  }
+  showToast('드래프트 경계 기반 3D 자동 파팅라인 활성화', 'ok');
 });
 
 $('parting-slider').addEventListener('input', (e) => {
@@ -1542,7 +2016,22 @@ async function updateAnalysisOnPartingChange() {
     animateScore('score-num-3d', 'ring-fill-3d', 'score-grade-3d', result.score);
     renderMoldFeatures(result.moldFeatures);
     renderIssues('issues-list-3d', result.issues);
-    STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+    
+    if (result.defects) {
+      renderDefectPredictionSummary(result.defects);
+    }
+    
+    // 최적 성형방향 추천 UI 반영
+    if (result.recommendation) {
+      $('recommendation-info-3d').style.display = 'flex';
+      $('reco-direction').textContent = `${result.recommendation.bestDirection} 방향 (권장)`;
+      $('reco-confidence').textContent = `${result.recommendation.confidence}%`;
+      $('reco-complexity').textContent = `${result.recommendation.complexityScore}점 (${result.recommendation.complexityLevel})`;
+    } else {
+      $('recommendation-info-3d').style.display = 'none';
+    }
+
+    await STLAnalyzer.updateCoreHelpers(App.stl.showCores);
   } catch (err) {
     console.error('Error during parting change analysis:', err);
   } finally {
@@ -1729,39 +2218,52 @@ function buildReport() {
     <div class="report-card">
       <h3>📐 2D 도면 검증 결과</h3>
       <div class="report-stat"><span class="stat-label">파일명</span><span class="stat-value">${App.dxf.file?.name || '-'}</span></div>
-      <div class="report-stat"><span class="stat-label">종합 점수</span><span class="stat-value">${r.score} / 100</span></div>
-      <div class="report-stat"><span class="stat-label">전체 엔티티</span><span class="stat-value">${r.entityCount}개</span></div>
-      <div class="report-stat"><span class="stat-label">레이어 수</span><span class="stat-value">${r.layers.length}개</span></div>
-      <div class="report-stat"><span class="stat-label">오류</span><span class="stat-value" style="color:#ff4d6d">${r.issues.filter(i=>i.level==='error').length}건</span></div>
-      <div class="report-stat"><span class="stat-label">경고</span><span class="stat-value" style="color:#ffd166">${r.issues.filter(i=>i.level==='warning').length}건</span></div>
+      <div class="report-stat"><span class="stat-label">종합 점수</span><span class="stat-value">${r?.score ?? '-'} / 100</span></div>
+      <div class="report-stat"><span class="stat-label">전체 엔티티</span><span class="stat-value">${r?.entityCount ?? '-'}개</span></div>
+      <div class="report-stat"><span class="stat-label">레이어 수</span><span class="stat-value">${r?.layers?.length ?? 0}개</span></div>
+      <div class="report-stat"><span class="stat-label">오류</span><span class="stat-value" style="color:#ff4d6d">${r?.issues ? r.issues.filter(i=>i.level==='error').length : 0}건</span></div>
+      <div class="report-stat"><span class="stat-label">경고</span><span class="stat-value" style="color:#ffd166">${r?.issues ? r.issues.filter(i=>i.level==='warning').length : 0}건</span></div>
     </div>`;
   }
 
   if (hasS) {
     const r = App.stl.result;
-    const isSTP = App.stl.file?.name.toLowerCase().endsWith('.stp') || App.stl.file?.name.toLowerCase().endsWith('.step');
+    const fileName = App.stl.file?.name || '';
+    const isSTP = fileName.toLowerCase().endsWith('.stp') || fileName.toLowerCase().endsWith('.step');
     html += `
     <div class="report-card">
       <h3>🧊 3D 사출성형 분석 결과 ${isSTP ? '(STP 가상 분석)' : ''}</h3>
       <div class="report-stat"><span class="stat-label">파일명</span><span class="stat-value">${App.stl.file?.name || '-'}</span></div>
-      ${isSTP && r.stats.metadata ? `
-      <div class="report-stat"><span class="stat-label">STP 모델명</span><span class="stat-value">${r.stats.metadata.productName}</span></div>
-      <div class="report-stat"><span class="stat-label">STP 면(Face) 수</span><span class="stat-value">${r.stats.metadata.faceCount}개</span></div>
-      <div class="report-stat"><span class="stat-label">STP 솔리드 수</span><span class="stat-value">${r.stats.metadata.shellCount}개</span></div>
+      ${isSTP && r?.stats?.metadata ? `
+      <div class="report-stat"><span class="stat-label">STP 모델명</span><span class="stat-value">${r.stats.metadata.productName || '-'}</span></div>
+      <div class="report-stat"><span class="stat-label">STP 면(Face) 수</span><span class="stat-value">${r.stats.metadata.faceCount || 0}개</span></div>
+      <div class="report-stat"><span class="stat-label">STP 솔리드 수</span><span class="stat-value">${r.stats.metadata.shellCount || 0}개</span></div>
       ` : ''}
-      <div class="report-stat"><span class="stat-label">양산성 점수</span><span class="stat-value">${r.score} / 100</span></div>
-      <div class="report-stat"><span class="stat-label">설정 탈형 축</span><span class="stat-value">${App.stl.pullAxis} 축</span></div>
-      <div class="report-stat"><span class="stat-label">적용 소재</span><span class="stat-value">${r.stats.material}</span></div>
-      <div class="report-stat"><span class="stat-label">삼각 면 수</span><span class="stat-value">${r.stats.triCount.toLocaleString()}개</span></div>
-      <div class="report-stat"><span class="stat-label">언더컷 비율</span><span class="stat-value" style="color:#ff4d6d">${r.stats.undercutPct.toFixed(1)}%</span></div>
-      <div class="report-stat"><span class="stat-label">수축 위험도</span><span class="stat-value">${r.stats.shrinkRisk}</span></div>
-      ${r.diagnostics ? `
-      <div class="report-stat" style="border-top:1px dashed #3d4b66; margin-top:8px; padding-top:8px;"><span class="stat-label">사출 온도 (Melt Temp)</span><span class="stat-value">${r.diagnostics.meltTemp} °C</span></div>
-      <div class="report-stat"><span class="stat-label">금형 온도 (Mold Temp)</span><span class="stat-value">${r.diagnostics.moldTemp} °C</span></div>
-      <div class="report-stat"><span class="stat-label">사출 유량 (Flow Rate)</span><span class="stat-value">${r.diagnostics.flowRate} cm³/s</span></div>
-      <div class="report-stat"><span class="stat-label">추정 압력 강하 (ΔP)</span><span class="stat-value" style="color:#ffd166">${r.diagnostics.estimatedPressureDrop.toFixed(1)} MPa</span></div>
-      <div class="report-stat"><span class="stat-label">소재 취출 냉각 시간</span><span class="stat-value" style="color:#00ffa3">${r.diagnostics.maxCoolingTime.toFixed(1)} 초</span></div>
-      <div class="report-stat"><span class="stat-label">필요 형체력 (F_clamp)</span><span class="stat-value" style="color:#00d4ff">${r.diagnostics.clampingForce.toFixed(1)} Tons</span></div>
+      <div class="report-stat"><span class="stat-label">양산성 점수</span><span class="stat-value">${r?.score ?? '-'} / 100</span></div>
+      <div class="report-stat"><span class="stat-label">설정 탈형 축</span><span class="stat-value">${App.stl.pullAxis || '-'} 축</span></div>
+      <div class="report-stat"><span class="stat-label">적용 소재</span><span class="stat-value">${r?.stats?.material || '-'}</span></div>
+      <div class="report-stat"><span class="stat-label">삼각 면 수</span><span class="stat-value">${r?.stats?.triCount ? r.stats.triCount.toLocaleString() : '-'}개</span></div>
+      <div class="report-stat"><span class="stat-label">언더컷 비율</span><span class="stat-value" style="color:#ff4d6d">${r?.stats?.undercutPct !== undefined ? r.stats.undercutPct.toFixed(1) : '-'}%</span></div>
+      <div class="report-stat"><span class="stat-label">싱크마크 위험도 (Sink Risk)</span><span class="stat-value" style="color:${r?.defects?.sink?.severity === 'HIGH' ? '#ff4d6d' : r?.defects?.sink?.severity === 'MEDIUM' ? '#ffd166' : '#00ffa3'}">${r?.defects?.sink?.severity || '-'} (개수: ${r?.defects?.sink?.count ?? 0}개, 면적: ${r?.defects?.sink?.area ?? 0}㎟)</span></div>
+      <div class="report-stat"><span class="stat-label">수축 위험도 (Shrinkage Risk)</span><span class="stat-value" style="color:${r?.defects?.shrinkage?.riskLevel === 'HIGH' ? '#ff4d6d' : r?.defects?.shrinkage?.riskLevel === 'MEDIUM' ? '#ffd166' : '#00ffa3'}">${r?.defects?.shrinkage?.riskLevel || '-'} (최대: ${r?.defects?.shrinkage?.maxShrinkage !== undefined ? r.defects.shrinkage.maxShrinkage.toFixed(2) : '-'}%, 평균: ${r?.defects?.shrinkage?.avgShrinkage !== undefined ? r.defects.shrinkage.avgShrinkage.toFixed(2) : '-'}%)</span></div>
+      <div class="report-stat"><span class="stat-label">변형 위험도 (Warpage Risk)</span><span class="stat-value" style="color:${r?.defects?.warpage?.risk === 'HIGH' ? '#ff4d6d' : r?.defects?.warpage?.risk === 'MEDIUM' ? '#ffd166' : '#00ffa3'}">${r?.defects?.warpage?.risk || '-'} (점수: ${r?.defects?.warpage?.score ?? '-'}점, 방향: ${r?.defects?.warpage?.direction || '-'})</span></div>
+      ${App.stl.weldStats ? `
+      <div class="report-stat" style="border-top:1px dashed #3d4b66; margin-top:8px; padding-top:8px;"><span class="stat-label">웰드라인 개수 (Weld Count)</span><span class="stat-value" style="color:#fff">${App.stl.weldStats.weldCount ?? 0} 개</span></div>
+      <div class="report-stat"><span class="stat-label">고위험 웰드라인 (High Risk)</span><span class="stat-value" style="color:#ff4d6d">${App.stl.weldStats.highRiskCount ?? 0} 개</span></div>
+      <div class="report-stat"><span class="stat-label">웰드라인 위험도 점수</span><span class="stat-value" style="color:#ffd166">${App.stl.weldStats.weldSeverityScore ?? 0} 점</span></div>
+      ` : ''}
+      ${App.stl.airtrapStats ? `
+      <div class="report-stat" style="border-top:1px dashed #3d4b66; margin-top:8px; padding-top:8px;"><span class="stat-label">에어트랩 개수 (Air Trap Count)</span><span class="stat-value" style="color:#fff">${App.stl.airtrapStats.airtrapCount ?? 0} 개</span></div>
+      <div class="report-stat"><span class="stat-label">고위험 에어트랩 (High Risk)</span><span class="stat-value" style="color:#ff00ff">${App.stl.airtrapStats.airtrapHighRiskCount ?? 0} 개</span></div>
+      <div class="report-stat"><span class="stat-label">에어트랩 위험도 점수</span><span class="stat-value" style="color:#ffd166">${App.stl.airtrapStats.airtrapSeverityScore ?? 0} 점</span></div>
+      ` : ''}
+      ${r?.diagnostics ? `
+      <div class="report-stat" style="border-top:1px dashed #3d4b66; margin-top:8px; padding-top:8px;"><span class="stat-label">사출 온도 (Melt Temp)</span><span class="stat-value">${r.diagnostics.meltTemp ?? '-'} °C</span></div>
+      <div class="report-stat"><span class="stat-label">금형 온도 (Mold Temp)</span><span class="stat-value">${r.diagnostics.moldTemp ?? '-'} °C</span></div>
+      <div class="report-stat"><span class="stat-label">사출 유량 (Flow Rate)</span><span class="stat-value">${r.diagnostics.flowRate ?? '-'} cm³/s</span></div>
+      <div class="report-stat"><span class="stat-label">추정 압력 강하 (ΔP)</span><span class="stat-value" style="color:#ffd166">${r.diagnostics.estimatedPressureDrop !== undefined ? r.diagnostics.estimatedPressureDrop.toFixed(1) : '-'} MPa</span></div>
+      <div class="report-stat"><span class="stat-label">소재 취출 냉각 시간</span><span class="stat-value" style="color:#00ffa3">${r.diagnostics.maxCoolingTime !== undefined ? r.diagnostics.maxCoolingTime.toFixed(1) : '-'} 초</span></div>
+      <div class="report-stat"><span class="stat-label">필요 형체력 (F_clamp)</span><span class="stat-value" style="color:#00d4ff">${r.diagnostics.clampingForce !== undefined ? r.diagnostics.clampingForce.toFixed(1) : '-'} Tons</span></div>
       ` : ''}
     </div>`;
   }

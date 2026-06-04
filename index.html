@@ -163,12 +163,13 @@
             </div>
             <div class="sidebar-padding">
               <div class="material-section" id="axis-section">
-                <div class="material-grid axes">
+                <div class="material-grid axes" style="grid-template-columns: 1fr 1fr 1fr 1fr;">
                   <button class="axis-btn" data-axis="X">X 축</button>
                   <button class="axis-btn" data-axis="Y">Y 축</button>
                   <button class="axis-btn active" data-axis="Z">Z 축</button>
-                  <button class="btn btn-outline" id="btn-flip-axis" style="grid-column: span 3; margin-top: 5px; font-size: 0.76rem; height:28px;">↕ 180도 반전 (뒤집기)</button>
-                  <label class="toggle-container" style="grid-column: span 3; margin-top: 8px; display: flex; align-items: center; font-size: 0.74rem; color: var(--cyan); cursor: pointer;">
+                  <button class="axis-btn" data-axis="AUTO" id="btn-axis-auto" style="background: linear-gradient(135deg, #0055ff, #00d4ff); color: #fff; border: 1px solid #00ffa3;">AUTO</button>
+                  <button class="btn btn-outline" id="btn-flip-axis" style="grid-column: span 4; margin-top: 5px; font-size: 0.76rem; height:28px;">↕ 180도 반전 (뒤집기)</button>
+                  <label class="toggle-container" style="grid-column: span 4; margin-top: 8px; display: flex; align-items: center; font-size: 0.74rem; color: var(--cyan); cursor: pointer;">
                     <input type="checkbox" id="chk-auto-rotate" checked style="margin-right: 6px; accent-color: var(--cyan);" />
                     <span>선택 축으로 모델 자동 회전</span>
                   </label>
@@ -309,6 +310,9 @@
             <button class="tool-btn active" id="btn-draft-overlay" title="구배각 오버레이">🎨 구배각</button>
             <button class="tool-btn" id="btn-flow-overlay" title="사출 유동 해석 (게이트 필요)">🌊 유동</button>
             <button class="tool-btn" id="btn-shrink-overlay" title="수축 위험 예측">📉 수축</button>
+            <button class="tool-btn" id="btn-sink-overlay" title="싱크마크 위험 예측">🟠 싱크마크</button>
+            <button class="tool-btn" id="btn-warp-overlay" title="변형 위험 예측">🌀 변형</button>
+            <button class="tool-btn" id="btn-cooling-overlay" title="금형 냉각 온도 분포">❄️ 냉각</button>
             <span class="tool-sep-v"></span>
 
             <!-- Tool Toggles -->
@@ -336,10 +340,16 @@
           </div>
 
           <!-- Parting Plane Floating controls -->
-          <div class="flow-controls" id="parting-controls" style="display:none; bottom: 75px;">
-            <span style="color: var(--cyan); font-size: 0.8rem; font-weight: bold; margin-right: 8px;">파팅 높이:</span>
-            <input type="range" class="flow-slider" id="parting-slider" min="0" max="100" value="50" />
-            <span id="parting-val-display" style="color: #fff; font-size: 0.8rem; font-weight: bold; margin-left: 8px;">50%</span>
+          <div class="flow-controls" id="parting-controls" style="display:none; bottom: 75px; flex-direction: column; gap: 8px; align-items: flex-start; padding: 10px; height: auto;">
+            <div style="display: flex; gap: 8px; width: 100%;">
+              <button class="runner-btn active" id="btn-parting-manual" style="padding: 3px 8px; font-size: 0.72rem; border-radius: 4px;">수동 평면 모드</button>
+              <button class="runner-btn" id="btn-parting-auto" style="padding: 3px 8px; font-size: 0.72rem; border-radius: 4px;">자동 3D 경계 모드</button>
+            </div>
+            <div id="parting-slider-container" style="display: flex; width: 100%; align-items: center;">
+              <span style="color: var(--cyan); font-size: 0.8rem; font-weight: bold; margin-right: 8px; white-space: nowrap;">파팅 높이:</span>
+              <input type="range" class="flow-slider" id="parting-slider" min="0" max="100" value="50" style="flex: 1;" />
+              <span id="parting-val-display" style="color: #fff; font-size: 0.8rem; font-weight: bold; margin-left: 8px; min-width: 35px; text-align: right;">50%</span>
+            </div>
           </div>
         </section>
         <div class="cad-resizer resizer-right"></div>
@@ -377,6 +387,154 @@
               <span class="leg-dot green"></span><span>수축 낮음</span>
               <span class="leg-dot yellow"></span><span>주의</span>
               <span class="leg-dot red"></span><span>수축 위험</span>
+            </div>
+            <div class="legend-row" id="legend-weld" style="display:none">
+              <span class="leg-dot green"></span><span>저위험 웰드 (LOW)</span>
+              <span class="leg-dot yellow"></span><span>중위험 웰드 (MEDIUM)</span>
+              <span class="leg-dot red"></span><span>고위험 웰드 (HIGH)</span>
+            </div>
+            <div class="legend-row" id="legend-airtrap" style="display:none">
+              <span class="leg-dot green"></span><span>저위험 에어트랩 (LOW)</span>
+              <span class="leg-dot yellow"></span><span>중위험 에어트랩 (MEDIUM)</span>
+              <span class="leg-dot red"></span><span>고위험 에어트랩 (HIGH)</span>
+            </div>
+            <div class="legend-row" id="legend-sink" style="display:none">
+              <span class="leg-dot" style="background:#ff8000"></span><span>고위험 싱크 (HIGH)</span>
+              <span class="leg-dot" style="background:#a65200"></span><span>중위험 싱크 (MEDIUM)</span>
+              <span class="leg-dot" style="background:#261f1a"></span><span>안전 (LOW)</span>
+            </div>
+            <div class="legend-row" id="legend-warp" style="display:none">
+              <span class="leg-dot" style="background:#0066ff"></span><span>최대 변형</span>
+              <span class="leg-dot" style="background:#1a4d80"></span><span>중간 변형</span>
+              <span class="leg-dot" style="background:#1a2633"></span><span>최소 변형</span>
+            </div>
+            <div class="legend-row" id="legend-cooling" style="display:none">
+              <span class="leg-dot" style="background:#ff3300"></span><span>고온 (Melt)</span>
+              <span class="leg-dot" style="background:#00ffa3"></span><span>적정 온도</span>
+              <span class="leg-dot" style="background:#0033ff"></span><span>저온 (Coolant)</span>
+            </div>
+
+            <!-- Weld Line Prediction Card -->
+            <div class="mold-features" id="weld-info-3d" style="display:none; padding: 0; border: none; background: transparent; margin-top: 10px;">
+              <div style="border: 1px solid rgba(255, 77, 109, 0.4); background: linear-gradient(135deg, rgba(40, 10, 20, 0.6), rgba(10, 0, 5, 0.8)); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                <div style="color: #ff4d6d; font-weight: bold; font-size: 0.78rem; display: flex; align-items: center; gap: 4px; border-bottom: 1px solid rgba(255, 77, 109, 0.2); padding-bottom: 4px;">
+                  <span>⚡</span> <span>웰드라인 예측 결과 (Weld Line Prediction)</span>
+                </div>
+                <div style="font-size: 0.72rem; color: #b0c4de; display: flex; flex-direction: column; gap: 5px; width: 100%;">
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">총 웰드라인 개수 (Weld Count)</span>
+                    <span id="weld-count" style="color:#fff; font-weight:bold; font-size:0.8rem;">- 개</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">고위험 웰드라인 (High Risk Count)</span>
+                    <span id="weld-high-risk" style="color:#ff4d6d; font-weight:bold;">- 개</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">웰드라인 위험도 점수 (Severity Score)</span>
+                    <span id="weld-severity-score" style="color:#ffd166; font-weight:bold;">- 점</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Air Trap Prediction Card -->
+            <div class="mold-features" id="airtrap-info-3d" style="display:none; padding: 0; border: none; background: transparent; margin-top: 10px;">
+              <div style="border: 1px solid rgba(255, 0, 255, 0.4); background: linear-gradient(135deg, rgba(40, 0, 40, 0.6), rgba(10, 0, 10, 0.8)); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                <div style="color: #ff00ff; font-weight: bold; font-size: 0.78rem; display: flex; align-items: center; gap: 4px; border-bottom: 1px solid rgba(255, 0, 255, 0.2); padding-bottom: 4px;">
+                  <span>🎈</span> <span>에어트랩 예측 결과 (Air Trap Prediction)</span>
+                </div>
+                <div style="font-size: 0.72rem; color: #b0c4de; display: flex; flex-direction: column; gap: 5px; width: 100%;">
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">총 에어트랩 개수 (Air Trap Count)</span>
+                    <span id="airtrap-count" style="color:#fff; font-weight:bold; font-size:0.8rem;">- 개</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">고위험 에어트랩 (High Risk Count)</span>
+                    <span id="airtrap-high-risk" style="color:#ff00ff; font-weight:bold;">- 개</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">에어트랩 위험도 점수 (Severity Score)</span>
+                    <span id="airtrap-severity-score" style="color:#ffd166; font-weight:bold;">- 점</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Defect Prediction Summary Card -->
+            <div class="mold-features" id="defect-summary-card-3d" style="display:none; padding: 0; border: none; background: transparent; margin-top: 10px;">
+              <div style="border: 1px solid rgba(0, 212, 255, 0.4); background: linear-gradient(135deg, rgba(10, 25, 40, 0.7), rgba(5, 10, 20, 0.9)); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; width: 100%;">
+                <div style="color: var(--cyan); font-weight: bold; font-size: 0.78rem; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(0, 212, 255, 0.2); padding-bottom: 6px;">
+                  <div style="display: flex; align-items: center; gap: 4px;">
+                    <span>🔍</span> <span>통합 결함 예측 요약 (Defect Prediction)</span>
+                  </div>
+                  <span id="defect-confidence-score" style="color: #00ff66; font-size: 0.72rem; font-weight: bold;">신뢰도: -%</span>
+                </div>
+                <div style="font-size: 0.72rem; color: #b0c4de; display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">1. 싱크마크 위험도 (Sink Risk)</span>
+                    <span id="defect-sink-risk" style="color:#fff; font-weight:bold;">-</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">2. 수축 위험도 (Shrink Risk)</span>
+                    <span id="defect-shrink-risk" style="color:#fff; font-weight:bold;">-</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">3. 변형 위험도 (Warpage Risk)</span>
+                    <span id="defect-warp-risk" style="color:#fff; font-weight:bold;">-</span>
+                  </div>
+                  <div style="display:flex; flex-direction: column; gap: 2px; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 4px;">
+                    <span style="color:#a0a5b5;">4. 결함 집중 영역 (Critical Areas)</span>
+                    <span id="defect-critical-areas" style="color:#ffd166; font-weight:bold; font-size:0.7rem; line-height: 1.3;">-</span>
+                  </div>
+                  <div style="display:flex; flex-direction: column; gap: 4px; padding-top: 2px;">
+                    <span style="color:#a0a5b5;">5. 권장 설계 변경 조치 (Recommended Actions)</span>
+                    <ul id="defect-reco-actions" style="margin: 0; padding-left: 12px; color: #00d4ff; line-height: 1.3; display: flex; flex-direction: column; gap: 3px;">
+                      <li>-</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+
+
+            <!-- Recommended Pull Direction Card -->
+            <div class="mold-features" id="recommendation-info-3d" style="display:none; margin-top: 10px; padding: 0; border: none; background: transparent;">
+              <div style="border: 1px solid rgba(0, 212, 255, 0.4); background: linear-gradient(135deg, rgba(0, 40, 60, 0.6), rgba(0, 10, 20, 0.8)); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                <div style="color: var(--cyan); font-weight: bold; font-size: 0.78rem; display: flex; align-items: center; gap: 4px; border-bottom: 1px solid rgba(0, 212, 255, 0.2); padding-bottom: 4px;">
+                  <span>🎯</span> <span>최적 사출 성형방향 추천 (Auto-Pull)</span>
+                </div>
+                <div style="font-size: 0.72rem; color: #b0c4de; display: flex; flex-direction: column; gap: 5px; width: 100%;">
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">최적 탈형 방향 (Recommended Direction)</span>
+                    <span id="reco-direction" style="color:#00ffa3; font-weight:bold; font-size:0.8rem;">-</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">추천 신뢰도 (Confidence Score)</span>
+                    <span id="reco-confidence" style="color:#00d4ff; font-weight:bold;">- %</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">금형 기구 복잡도 (Tool Complexity Score)</span>
+                    <span id="reco-complexity" style="color:#ffd166; font-weight:bold;">-</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 4px;">
+                    <span style="color:#a0a5b5;">투영 면적 (Projected Area)</span>
+                    <span id="reco-proj-area" style="color:#fff; font-weight:bold;">- ㎠</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">언더컷 면적 (Undercut Area)</span>
+                    <span id="reco-undercut-area" style="color:#fff; font-weight:bold;">- ㎟</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">슬라이드 수 (Slides)</span>
+                    <span id="reco-slides" style="color:#fff; font-weight:bold;">- 개</span>
+                  </div>
+                  <div style="display:flex; justify-content:space-between; align-items: center;">
+                    <span style="color:#a0a5b5;">리프터 수 (Lifters)</span>
+                    <span id="reco-lifters" style="color:#fff; font-weight:bold;">- 개</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Gate Position Stats -->
@@ -502,5 +660,6 @@
   <script src="js/dxf-analyzer.js?v=2"></script>
   <script src="js/stl-analyzer.js?v=2"></script>
   <script src="js/main.js?v=2"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>

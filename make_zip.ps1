@@ -1,14 +1,14 @@
 $paths = @(
-    'c:\Users\mecha\PROJECT\AUTO_CAD_TOOL\index.html',
-    'c:\Users\mecha\PROJECT\AUTO_CAD_TOOL\README.txt',
-    'c:\Users\mecha\PROJECT\AUTO_CAD_TOOL\css',
-    'c:\Users\mecha\PROJECT\AUTO_CAD_TOOL\js',
-    'c:\Users\mecha\PROJECT\AUTO_CAD_TOOL\libs',
-    'c:\Users\mecha\PROJECT\AUTO_CAD_TOOL\samples'
+    "$PSScriptRoot\index.html",
+    "$PSScriptRoot\README.txt",
+    "$PSScriptRoot\css",
+    "$PSScriptRoot\js",
+    "$PSScriptRoot\libs",
+    "$PSScriptRoot\samples"
 )
 
-$batFile = 'c:\Users\mecha\PROJECT\AUTO_CAD_TOOL\▶ DIMA 실행.bat'
-$dest    = 'c:\Users\mecha\PROJECT\DIMA_오프라인패키지.zip'
+$batFile = "$PSScriptRoot\▶ DIMA 실행.bat"
+$dest    = "$PSScriptRoot\DIMA_오프라인패키지.zip"
 
 # BAT 파일 포함
 $paths += $batFile

@@ -26,7 +26,17 @@ const STLAnalyzer = (() => {
   let _defectMarkers = [];
   let _flowOverlayActive = false;
   let _shrinkageOverlayActive = false;
+  let _sinkOverlayActive = false;
+  let _warpOverlayActive = false;
+  let _warpArrow = null;
+
   let _flowDistances = null;
+  let _vertexTemperatures = null;
+  let _vertexDisplacements = null;
+  let _vertexSinkRisk = null;
+  let _cycleTime = 0.0;
+  let _hotSpots = [];
+  let _coolingOverlayActive = false;
   let _vertexThickness = null;
   let _maxFlowDistance = 0;
   let _isGateSettingMode = false;
@@ -49,12 +59,24 @@ const STLAnalyzer = (() => {
   let _pressureLimit = 100;
 
   const MATERIAL_DB = {
-    ABS: { shrink: 0.005, minDraft: 1.0, ribRatio: 0.6, name: 'ABS', alpha: 0.08, Tm: 230, Tw: 50, Te: 90, TmMin: 200, TmMax: 280, TwMin: 40, TwMax: 90 },
-    PC:  { shrink: 0.006, minDraft: 1.5, ribRatio: 0.55, name: 'PC (폴리카보네이트)', alpha: 0.12, Tm: 290, Tw: 80, Te: 130, TmMin: 280, TmMax: 320, TwMin: 70, TwMax: 120 },
-    PP:  { shrink: 0.015, minDraft: 2.0, ribRatio: 0.5,  name: 'PP (폴리프로필렌)', alpha: 0.07, Tm: 220, Tw: 40, Te: 80, TmMin: 200, TmMax: 260, TwMin: 20, TwMax: 80 },
-    POM: { shrink: 0.020, minDraft: 0.5, ribRatio: 0.5,  name: 'POM (아세탈)', alpha: 0.09, Tm: 200, Tw: 70, Te: 100, TmMin: 190, TmMax: 230, TwMin: 60, TwMax: 120 },
-    FORTRON: { shrink: 0.005, minDraft: 1.5, ribRatio: 0.5, name: 'FORTRON (PPS 수지)', alpha: 0.10, Tm: 310, Tw: 130, Te: 150, TmMin: 300, TmMax: 340, TwMin: 120, TwMax: 160 },
+    ABS: { shrink: 0.005, linearShrinkage: 0.005, volumetricShrinkage: 0.015, flowShrinkage: 0.005, crossFlowShrinkage: 0.006, minDraft: 1.0, ribRatio: 0.6, name: 'ABS', alpha: 0.08, Tm: 230, Tw: 50, Te: 90, TmMin: 200, TmMax: 280, TwMin: 40, TwMax: 90 },
+    PC:  { shrink: 0.006, linearShrinkage: 0.006, volumetricShrinkage: 0.018, flowShrinkage: 0.006, crossFlowShrinkage: 0.007, minDraft: 1.5, ribRatio: 0.55, name: 'PC', alpha: 0.12, Tm: 290, Tw: 80, Te: 130, TmMin: 280, TmMax: 320, TwMin: 70, TwMax: 120 },
+    'PC+ABS': { shrink: 0.0055, linearShrinkage: 0.0055, volumetricShrinkage: 0.016, flowShrinkage: 0.0055, crossFlowShrinkage: 0.0062, minDraft: 1.2, ribRatio: 0.55, name: 'PC+ABS', alpha: 0.10, Tm: 260, Tw: 65, Te: 110, TmMin: 240, TmMax: 290, TwMin: 50, TwMax: 90 },
+    PP:  { shrink: 0.015, linearShrinkage: 0.015, volumetricShrinkage: 0.045, flowShrinkage: 0.015, crossFlowShrinkage: 0.017, minDraft: 2.0, ribRatio: 0.5,  name: 'PP', alpha: 0.07, Tm: 220, Tw: 40, Te: 80, TmMin: 200, TmMax: 260, TwMin: 20, TwMax: 80 },
+    PBT: { shrink: 0.018, linearShrinkage: 0.018, volumetricShrinkage: 0.054, flowShrinkage: 0.018, crossFlowShrinkage: 0.020, minDraft: 1.5, ribRatio: 0.5,  name: 'PBT', alpha: 0.08, Tm: 250, Tw: 60, Te: 110, TmMin: 230, TmMax: 270, TwMin: 40, TwMax: 90 },
+    'PBT GF30': { shrink: 0.004, linearShrinkage: 0.004, volumetricShrinkage: 0.012, flowShrinkage: 0.003, crossFlowShrinkage: 0.006, minDraft: 1.0, ribRatio: 0.45, name: 'PBT GF30', alpha: 0.09, Tm: 260, Tw: 80, Te: 120, TmMin: 240, TmMax: 280, TwMin: 60, TwMax: 100 },
+    PA6: { shrink: 0.013, linearShrinkage: 0.013, volumetricShrinkage: 0.039, flowShrinkage: 0.013, crossFlowShrinkage: 0.015, minDraft: 1.5, ribRatio: 0.5,  name: 'PA6', alpha: 0.07, Tm: 240, Tw: 80, Te: 110, TmMin: 220, TmMax: 280, TwMin: 50, TwMax: 100 },
+    PA66: { shrink: 0.015, linearShrinkage: 0.015, volumetricShrinkage: 0.045, flowShrinkage: 0.015, crossFlowShrinkage: 0.018, minDraft: 1.5, ribRatio: 0.5,  name: 'PA66', alpha: 0.07, Tm: 280, Tw: 80, Te: 120, TmMin: 260, TmMax: 300, TwMin: 60, TwMax: 110 },
+    'PA66 GF30': { shrink: 0.005, linearShrinkage: 0.005, volumetricShrinkage: 0.015, flowShrinkage: 0.004, crossFlowShrinkage: 0.008, minDraft: 1.0, ribRatio: 0.45, name: 'PA66 GF30', alpha: 0.08, Tm: 290, Tw: 90, Te: 130, TmMin: 270, TmMax: 310, TwMin: 70, TwMax: 120 },
+    'PA66 GF50': { shrink: 0.003, linearShrinkage: 0.003, volumetricShrinkage: 0.009, flowShrinkage: 0.002, crossFlowShrinkage: 0.005, minDraft: 0.8, ribRatio: 0.4, name: 'PA66 GF50', alpha: 0.09, Tm: 300, Tw: 100, Te: 140, TmMin: 280, TmMax: 320, TwMin: 80, TwMax: 130 },
+    LCP: { shrink: 0.001, linearShrinkage: 0.001, volumetricShrinkage: 0.003, flowShrinkage: 0.001, crossFlowShrinkage: 0.004, minDraft: 0.5, ribRatio: 0.4,  name: 'LCP', alpha: 0.11, Tm: 340, Tw: 110, Te: 160, TmMin: 320, TmMax: 360, TwMin: 80, TwMax: 150 },
+    POM: { shrink: 0.020, linearShrinkage: 0.020, volumetricShrinkage: 0.060, flowShrinkage: 0.020, crossFlowShrinkage: 0.022, minDraft: 0.5, ribRatio: 0.5,  name: 'POM', alpha: 0.09, Tm: 200, Tw: 70, Te: 100, TmMin: 190, TmMax: 230, TwMin: 60, TwMax: 120 },
+    PMMA: { shrink: 0.005, linearShrinkage: 0.005, volumetricShrinkage: 0.015, flowShrinkage: 0.005, crossFlowShrinkage: 0.006, minDraft: 1.5, ribRatio: 0.55, name: 'PMMA', alpha: 0.08, Tm: 220, Tw: 60, Te: 90, TmMin: 200, TmMax: 250, TwMin: 40, TwMax: 80 },
+    FORTRON: { shrink: 0.005, linearShrinkage: 0.005, volumetricShrinkage: 0.015, flowShrinkage: 0.005, crossFlowShrinkage: 0.006, minDraft: 1.5, ribRatio: 0.5, name: 'FORTRON', alpha: 0.10, Tm: 310, Tw: 130, Te: 150, TmMin: 300, TmMax: 340, TwMin: 120, TwMax: 160 },
+    TPU: { shrink: 0.012, linearShrinkage: 0.012, volumetricShrinkage: 0.036, flowShrinkage: 0.012, crossFlowShrinkage: 0.014, minDraft: 2.0, ribRatio: 0.6,  name: 'TPU', alpha: 0.05, Tm: 210, Tw: 30, Te: 60, TmMin: 190, TmMax: 230, TwMin: 15, TwMax: 50 },
+    TPE: { shrink: 0.014, linearShrinkage: 0.014, volumetricShrinkage: 0.042, flowShrinkage: 0.014, crossFlowShrinkage: 0.016, minDraft: 2.0, ribRatio: 0.6,  name: 'TPE', alpha: 0.06, Tm: 200, Tw: 30, Te: 60, TmMin: 180, TmMax: 220, TwMin: 15, TwMax: 50 },
   };
+
 
   /* ──────────────────────────────────────
      1. STL/STP PARSER
@@ -1235,6 +1257,7 @@ const STLAnalyzer = (() => {
     const dx=maxX-minX, dy=maxY-minY, dz=maxZ-minZ;
     const minDim = Math.min(dx,dy,dz);
     const maxDim = Math.max(dx,dy,dz);
+    const avgDim = (dx + dy + dz) / 3;
     const thicknessRatio = minDim / maxDim;
 
     // 메쉬의 삼각형 요소를 순회하여 정밀 표면적 계산 (Heron / Cross Product)
@@ -1375,10 +1398,37 @@ const STLAnalyzer = (() => {
       desc: `최소 치수 ${minDim.toFixed(2)}mm / 최대 치수 ${maxDim.toFixed(2)}mm. ${mat.name} Rib 권장 두께: 벽두께의 ${(mat.ribRatio*100).toFixed(0)}%.`,
     });
 
+    if (!_adjacencyGraph) {
+      _geometry.computeBoundingBox();
+      const modelSize = new THREE.Vector3();
+      _geometry.boundingBox.getSize(modelSize);
+      const diag = modelSize.length();
+      const epsilon = Math.max(0.05, diag * 0.001);
+      _adjacencyGraph = buildAdjacencyGraph(pos, epsilon);
+    }
+    if (!_vertexThickness) {
+      computeWallThickness();
+    }
+    const sinkRes = predictSinkMarks(_adjacencyGraph);
+    const shrinkRes = predictShrinkage(_adjacencyGraph);
+    const warpRes = predictWarpage(_adjacencyGraph, shrinkRes);
+
     issues.push({
-      level: shrinkRisk === 'HIGH' ? 'error' : shrinkRisk === 'MEDIUM' ? 'warning' : 'ok',
-      title: `수축(Sink Mark) 위험도: ${shrinkRisk}`,
-      desc: `${mat.name} 수축률 ${(mat.shrink*100).toFixed(1)}%. ${shrinkRisk !== 'LOW' ? 'Rib 두께 및 냉각 시간 재검토를 권장합니다.' : '수축 위험도가 낮습니다.'}`,
+      level: sinkRes.severity === 'HIGH' ? 'error' : sinkRes.severity === 'MEDIUM' ? 'warning' : 'ok',
+      title: `싱크마크 위험도 (Sink Risk): ${sinkRes.severity}`,
+      desc: `예측 싱크마크 개수: ${sinkRes.count}개, 총 예측 면적: ${sinkRes.area}㎟. ${sinkRes.severity === 'HIGH' ? 'Rib 두께 감소 및 보스 코어아웃(Core Out) 설계 변경을 권장합니다.' : '수축/함몰 우려가 적은 편입니다.'}`
+    });
+
+    issues.push({
+      level: shrinkRes.riskLevel === 'HIGH' ? 'error' : shrinkRes.riskLevel === 'MEDIUM' ? 'warning' : 'ok',
+      title: `재질 수축 위험도 (Shrinkage Risk): ${shrinkRes.riskLevel}`,
+      desc: `최대 수축률: ${shrinkRes.maxShrinkage.toFixed(2)}%, 평균 수축률: ${shrinkRes.avgShrinkage.toFixed(2)}%. 보압 압력 및 보압 시간 최적화를 권장합니다.`
+    });
+
+    issues.push({
+      level: warpRes.risk === 'HIGH' ? 'error' : warpRes.risk === 'MEDIUM' ? 'warning' : 'ok',
+      title: `제품 변형 위험도 (Warpage Risk): ${warpRes.risk} (점수: ${warpRes.score}점)`,
+      desc: `예상 변형 방향: ${warpRes.direction}, 변형 변위량: ${warpRes.magnitude.toFixed(2)}mm. ${warpRes.risk === 'HIGH' ? '냉각 채널 추가 설계 및 리브/보스 구조 최적화를 권장합니다.' : '변형 위험이 보통 이하입니다.'}`
     });
 
     issues.push({
@@ -1552,7 +1602,6 @@ const STLAnalyzer = (() => {
       }
     }
 
-    const avgDim = (dx + dy + dz) / 3;
     const cSize = Math.max(5.0, Math.min(avgDim * 0.12, 25.0));
 
     const finalSlides = processCoreClusters(slideClusters, cSize, avgDim, true);
@@ -1723,11 +1772,14 @@ const STLAnalyzer = (() => {
       scoresMap: directionScores
     };
 
+    // Defect Predictions
     return {
       issues, score, moldFeatures, diagnostics, recommendation,
+      defects: { sink: sinkRes, shrinkage: shrinkRes, warpage: warpRes },
       stats: { undercutPct, marginalPct, okPct, triCount, material: mat.name, shrinkRisk, isSimulated: stlData.isSimulated, metadata: stlData.metadata }
     };
   }
+
 
   function setFlipAxis(flip) {
     _flipAxis = flip;
@@ -1856,9 +1908,15 @@ const STLAnalyzer = (() => {
     const normals   = _geometry.attributes.normal.array;
     let colors;
     if (_shrinkageOverlayActive) {
-      colors = computeShrinkageColors(positions, normals);
+      colors = computeShrinkagePredictColors(positions, normals);
+    } else if (_sinkOverlayActive) {
+      colors = computeSinkColors(positions, normals);
+    } else if (_warpOverlayActive) {
+      colors = computeWarpageColors(positions, normals);
     } else if (_flowOverlayActive && _flowDistances) {
       colors = computeFlowColors(positions, _flowDistances, _maxFlowDistance, _flowAnimationTime);
+    } else if (_coolingOverlayActive && _vertexTemperatures) {
+      colors = computeCoolingColors(positions, _vertexTemperatures);
     } else {
       colors = computeDraftColors(positions, normals);
     }
@@ -1875,7 +1933,10 @@ const STLAnalyzer = (() => {
     if (_partingLineObj) {
       updatePartingLine(true);
     }
+
+    updateWarpArrow();
   }
+
 
   async function updateCoreHelpers(visible) {
     if (_coreHelpers) {
@@ -2826,8 +2887,10 @@ const STLAnalyzer = (() => {
   // startKeys: 단일 키 또는 키 배열 (멀티 소스 다익스트라)
   function calculateFlowDistances(startKeys, graph) {
     const distances = {};
+    const parents = {};
     for (const key in graph) {
       distances[key] = Infinity;
+      parents[key] = null;
     }
 
     const heap = new MinHeap((a, b) => distances[a] - distances[b]);
@@ -2874,19 +2937,37 @@ const STLAnalyzer = (() => {
         
         if (neighKey in distances && newDist < distances[neighKey]) {
           distances[neighKey] = newDist;
+          parents[neighKey] = currKey;
           heap.push(neighKey);
         }
       });
     }
-    return distances;
+    return { distances, parents };
   }
 
-  function computeWeldLineSegments(graph, gateDistancesList, positions, normals) {
+  function computeWeldLineSegments(graph, gateDistancesList, positions, normals, weldDetails = []) {
     const segments = [];
     if (gateDistancesList.length < 2) return segments;
 
     const getVertKey = (x, y, z) => `${Math.round(x*1000)/1000},${Math.round(y*1000)/1000},${Math.round(z*1000)/1000}`;
     const offsetVal = 0.5;
+
+    const getFlowDirection = (nodeKey, gateIdx) => {
+      const parents = gateDistancesList[gateIdx].parents;
+      const node = graph[nodeKey];
+      if (!node) return new THREE.Vector3();
+      
+      const pKey = parents[nodeKey];
+      if (pKey && graph[pKey]) {
+        const parentNode = graph[pKey];
+        return new THREE.Vector3(node.x - parentNode.x, node.y - parentNode.y, node.z - parentNode.z).normalize();
+      }
+      const gatePos = _gatePositions[gateIdx];
+      if (gatePos) {
+        return new THREE.Vector3(node.x - gatePos.x, node.y - gatePos.y, node.z - gatePos.z).normalize();
+      }
+      return new THREE.Vector3();
+    };
 
     for (let i = 0; i < positions.length; i += 9) {
       const pA = new THREE.Vector3(positions[i],   positions[i+1], positions[i+2]);
@@ -2906,7 +2987,7 @@ const STLAnalyzer = (() => {
       let gC = -1, dC = Infinity;
 
       for (let g = 0; g < gateDistancesList.length; g++) {
-        const dists = gateDistancesList[g];
+        const dists = gateDistancesList[g].arrivals;
         const distA = dists[kA] !== undefined ? dists[kA] : Infinity;
         const distB = dists[kB] !== undefined ? dists[kB] : Infinity;
         const distC = dists[kC] !== undefined ? dists[kC] : Infinity;
@@ -2920,8 +3001,8 @@ const STLAnalyzer = (() => {
       if (gA === gB && gB === gC) continue;
 
       const getCrossingPoint = (pU, pV, nU, nV, kU, kV, gU, gV) => {
-        const distsU = gateDistancesList[gU];
-        const distsV = gateDistancesList[gV];
+        const distsU = gateDistancesList[gU].arrivals;
+        const distsV = gateDistancesList[gV].arrivals;
 
         const dU_gU = distsU[kU] || 0;
         const dU_gV = distsV[kU] || 0;
@@ -2957,6 +3038,29 @@ const STLAnalyzer = (() => {
 
       if (crossings.length >= 2) {
         segments.push(crossings[0], crossings[1]);
+
+        const uniqueGates = Array.from(new Set([gA, gB, gC].filter(g => g !== -1)));
+        let angle = 180;
+        if (uniqueGates.length >= 2) {
+          const dir0 = getFlowDirection(kA, uniqueGates[0]);
+          const dir1 = getFlowDirection(kB, uniqueGates[1]);
+          if (dir0.lengthSq() > 0.1 && dir1.lengthSq() > 0.1) {
+            const dot = Math.max(-1.0, Math.min(1.0, dir0.dot(dir1)));
+            angle = Math.acos(dot) * (180 / Math.PI);
+          }
+        }
+
+        let severity = 'LOW';
+        if (angle >= 135) severity = 'HIGH';
+        else if (angle >= 75) severity = 'MEDIUM';
+
+        weldDetails.push({
+          start: crossings[0].clone(),
+          end: crossings[1].clone(),
+          angle: angle,
+          severity: severity,
+          length: crossings[0].distanceTo(crossings[1])
+        });
       }
     }
     return segments;
@@ -3111,10 +3215,26 @@ const STLAnalyzer = (() => {
     for (const v of unreachable) {
       if (airTrapClusters.every(c => v.pos.distanceTo(c.pos) >= 15)) {
         airTrapClusters.push(v);
-        if (airTrapClusters.length >= 2) break;
+        if (airTrapClusters.length >= 5) break;
       }
     }
-    airTrapClusters.forEach(v => defects.push({ type: 'air_trap', pos: v.pos, normal: v.normal, dist: Infinity }));
+    airTrapClusters.forEach(v => defects.push({
+      type: 'air_trap',
+      pos: v.pos,
+      normal: v.normal,
+      dist: Infinity,
+      riskLevel: 'HIGH',
+      score: 100
+    }));
+
+    // Bounding Box metrics for venting difficulty
+    const size = new THREE.Vector3();
+    _geometry.boundingBox.getSize(size);
+    const minV = _pullAxis === 'X' ? _geometry.boundingBox.min.x : _pullAxis === 'Y' ? _geometry.boundingBox.min.y : _geometry.boundingBox.min.z;
+    const maxV = _pullAxis === 'X' ? _geometry.boundingBox.max.x : _pullAxis === 'Y' ? _geometry.boundingBox.max.y : _geometry.boundingBox.max.z;
+    const partingH = minV + (maxV - minV) * (_partingHeightPct / 100);
+    const axisKey = _pullAxis === 'X' ? 'x' : _pullAxis === 'Y' ? 'y' : 'z';
+    const maxDim = Math.max(size.x, size.y, size.z) || 1.0;
 
     // ── 2. 에어 트랩: 미도달 없으면 오목한 심층 충진 구간 탐지 ──
     if (airTrapClusters.length === 0) {
@@ -3137,10 +3257,51 @@ const STLAnalyzer = (() => {
       for (const v of candidates) {
         if (distinct.every(d => v.pos.distanceTo(d.pos) >= 15)) {
           distinct.push(v);
-          if (distinct.length >= 2) break;
+          if (distinct.length >= 6) break;
         }
       }
-      distinct.forEach(v => defects.push({ type: 'air_trap', pos: v.pos, normal: v.normal, dist: v.dist }));
+      distinct.forEach(v => {
+        const fillRatio = _maxFlowDistance > 0 ? (v.dist / _maxFlowDistance) : 1.0;
+        const distToParting = Math.abs(v.pos[axisKey] - partingH);
+        const ventingFactor = distToParting / maxDim;
+
+        // Enclosed space check (local maximum)
+        const nodeKey = findClosestGraphNode(v.pos, graph);
+        let convergenceCount = 0;
+        let neighborCount = 0;
+        if (nodeKey && graph[nodeKey]) {
+          const nodeTime = _flowDistances[graph[nodeKey].vertIdx];
+          graph[nodeKey].neighbors.forEach(neighKey => {
+            const neighNode = graph[neighKey];
+            if (neighNode) {
+              const neighTime = _flowDistances[neighNode.vertIdx];
+              if (neighTime !== Infinity && neighTime < nodeTime) {
+                convergenceCount++;
+              }
+              neighborCount++;
+            }
+          });
+        }
+        const isEnclosed = neighborCount > 0 && (convergenceCount / neighborCount) > 0.7;
+
+        let rScore = 20;
+        if (fillRatio > 0.85) rScore += 30;
+        if (ventingFactor > 0.25) rScore += 20;
+        if (isEnclosed) rScore += 30;
+
+        let riskLevel = 'LOW';
+        if (rScore >= 70) riskLevel = 'HIGH';
+        else if (rScore >= 40) riskLevel = 'MEDIUM';
+
+        defects.push({
+          type: 'air_trap',
+          pos: v.pos,
+          normal: v.normal,
+          dist: v.dist,
+          riskLevel,
+          score: rScore
+        });
+      });
     }
 
     // ── 3. 웰드라인: 게이트 2개 이상일 때만 ──
@@ -3163,9 +3324,10 @@ const STLAnalyzer = (() => {
         }
       }
       
-      const segments = (graph && gateDistancesList) ? computeWeldLineSegments(graph, gateDistancesList, positions, normals) : [];
+      const weldDetails = [];
+      const segments = (graph && gateDistancesList) ? computeWeldLineSegments(graph, gateDistancesList, positions, normals, weldDetails) : [];
       if (bestWeldVert) {
-        defects.push({ type: 'weld_line', pos: bestWeldVert, segments });
+        defects.push({ type: 'weld_line', pos: bestWeldVert, segments, weldDetails });
       }
     }
 
@@ -3217,26 +3379,24 @@ const STLAnalyzer = (() => {
 
     defects.forEach(def => {
       if (def.type === 'air_trap') {
-        const normal = def.normal || new THREE.Vector3(0, 1, 0);
-        const ringRadius = Math.max(3.0, avgDim * 0.04);
-        
-        const geom = new THREE.RingGeometry(ringRadius * 0.8, ringRadius, 32);
-        const mat = new THREE.MeshBasicMaterial({ color: 0xff00ff, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
+        const sphereRadius = Math.max(2.0, avgDim * 0.025);
+        const geom = new THREE.SphereGeometry(sphereRadius, 16, 16);
+        const mat = new THREE.MeshPhongMaterial({
+          color: 0xff00ff,
+          emissive: 0x440044,
+          transparent: true,
+          opacity: 0.85
+        });
         const m = new THREE.Mesh(geom, mat);
         
         const worldPos = def.pos.clone();
-        const worldNormal = normal.clone();
-        const normalMatrix = new THREE.Matrix3().getNormalMatrix(_mesh.matrixWorld);
-        worldNormal.applyMatrix3(normalMatrix).normalize();
-        
         _mesh.localToWorld(worldPos);
-        worldPos.add(worldNormal.clone().multiplyScalar(0.5));
         m.position.copy(worldPos);
         
-        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), worldNormal);
-        
-        const label = createTextSprite('에어 트랩', '#ff00ff', 5);
-        label.position.set(0, ringRadius * 1.2, 0);
+        const labelText = `에어 트랩 (${def.riskLevel || 'LOW'})`;
+        const labelColor = def.riskLevel === 'HIGH' ? '#ff00ff' : def.riskLevel === 'MEDIUM' ? '#ffd166' : '#00ffa3';
+        const label = createTextSprite(labelText, labelColor, 4);
+        label.position.set(0, sphereRadius * 1.5, 0);
         m.add(label);
         
         _scene.add(m);
@@ -3245,7 +3405,7 @@ const STLAnalyzer = (() => {
         if (def.segments && def.segments.length > 0) {
           const geom = new THREE.BufferGeometry().setFromPoints(def.segments);
           const mat = new THREE.LineBasicMaterial({
-            color: 0xffff00,
+            color: 0xff0000,
             linewidth: 3,
             depthWrite: false
           });
@@ -3257,13 +3417,13 @@ const STLAnalyzer = (() => {
           def.segments.forEach(p => center.add(p));
           center.divideScalar(def.segments.length);
 
-          const label = createTextSprite('웰드 라인', '#ffff00', 4);
+          const label = createTextSprite('웰드 라인', '#ff0000', 4);
           label.position.copy(center).add(new THREE.Vector3(0, 4, 0));
           _mesh.add(label);
           _defectMarkers.push(label);
         } else {
           const geom = new THREE.SphereGeometry(2.0, 16, 16);
-          const mat = new THREE.MeshPhongMaterial({ color: 0xffff00, emissive: 0x555500 });
+          const mat = new THREE.MeshPhongMaterial({ color: 0xff0000, emissive: 0x550000 });
           const m = new THREE.Mesh(geom, mat);
           const worldPos = def.pos.clone();
           _mesh.localToWorld(worldPos);
@@ -3465,8 +3625,8 @@ const STLAnalyzer = (() => {
     return colors;
   }
 
-  /* 내부: 모든 게이트를 기준으로 유동 거리 재계산 */
-  function _doFlowCalculation() {
+  /* 내부: 모든 게이트를 기준으로 유동 거리 재계산 (Python 백엔드 우선 호출, 에러 시 로컬 다익스트라 폴백) */
+  async function _doFlowCalculation() {
     if (!_mesh || !_geometry || _gatePositions.length === 0) return null;
 
     const positions = _geometry.attributes.position.array;
@@ -3479,9 +3639,119 @@ const STLAnalyzer = (() => {
     const graph = buildAdjacencyGraph(positions, epsilon);
     _adjacencyGraph = graph;
 
+    try {
+      // 1. ArrayBuffer로 STL 파일 바이너리 취득
+      if (typeof App !== 'undefined' && App.stl && App.stl.file) {
+        const arrayBuffer = await App.stl.file.arrayBuffer();
+
+        // 2. 게이트 좌표 전송용 파라미터 빌드
+        const gatesData = _gatePositions.map((gp, gIdx) => {
+          return {
+            id: gIdx + 1,
+            coord: [gp.x, gp.y, gp.z],
+            speed_factor: _gateVelocityRatios[gIdx] !== undefined ? _gateVelocityRatios[gIdx] : 1.0,
+            pressure_factor: _gatePressureRatios[gIdx] !== undefined ? _gatePressureRatios[gIdx] : 1.0,
+            time_delay: 0.0,
+            trigger_voxel: null
+          };
+        });
+
+        const gatesStr = encodeURIComponent(JSON.stringify(gatesData));
+        // 복셀 해상도는 모델 크기에 비례하여 동적 조정 (평균 치수의 0.8% ~ 1.5% 수준)
+        const resolution = Math.max(0.3, Math.min(2.5, diag * 0.008));
+
+        const res = await fetch(`/solve-flow-python?gates=${gatesStr}&resolution=${resolution}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream'
+          },
+          body: arrayBuffer
+        });
+
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+
+        const data = await res.json();
+        if (data.status === "error") {
+          throw new Error(data.message);
+        }
+
+        // 3. 복셀 해석 결과(정점별 충진 시각) 매핑
+        _flowDistances = new Float32Array(data.vertex_fill_times);
+        _vertexTemperatures = data.vertex_temperatures ? new Float32Array(data.vertex_temperatures) : null;
+        _vertexDisplacements = data.vertex_displacements ? data.vertex_displacements : null;
+        _vertexSinkRisk = data.vertex_sink_risk ? new Float32Array(data.vertex_sink_risk) : null;
+        _cycleTime = data.cycle_time || 0.0;
+        _hotSpots = data.hot_spots || [];
+        
+        let maxDist = 0;
+        for (let i = 0; i < _flowDistances.length; i++) {
+          if (_flowDistances[i] !== -1.0 && _flowDistances[i] > maxDist) {
+            maxDist = _flowDistances[i];
+          }
+        }
+        _maxFlowDistance = maxDist;
+
+        // 웰드라인 매핑 (백엔드 좌표를 Three.js 뷰어의 웰드라인 세그먼트로 변환)
+        const segments = [];
+        const weldDetails = [];
+        if (data.weld_lines && data.weld_lines.length > 0) {
+          data.weld_lines.forEach(wl => {
+            const p = new THREE.Vector3(wl[0], wl[1], wl[2]);
+            segments.push(
+              p.clone().add(new THREE.Vector3(-0.8, 0, 0)),
+              p.clone().add(new THREE.Vector3(0.8, 0, 0))
+            );
+            weldDetails.push({
+              start: p,
+              end: p,
+              angle: 180,
+              severity: 'HIGH',
+              length: 1.6
+            });
+          });
+        }
+
+        const defects = [
+          { type: 'weld_line', pos: _gatePositions[0].clone(), segments, weldDetails }
+        ];
+
+        // 에어 트랩 및 수축 등 추가 결함 탐지 (로컬 분석 함수 호출 조합)
+        const localDefects = predictDefects(graph, []);
+        // weld_line을 제외한 에어트랩/수축만 결합
+        localDefects.forEach(d => {
+          if (d.type !== 'weld_line') defects.push(d);
+        });
+
+        createDefectMarkers(defects);
+        _flowAnimationTime = 0;
+        recolorGeometry();
+
+        const minDim = Math.min(modelSize.x, modelSize.y, modelSize.z);
+        const maxDim = Math.max(modelSize.x, modelSize.y, modelSize.z);
+        const totalArea = (positions.length / 9) * 10;
+        const diagnostics = _getDiagnostics(minDim, maxDim, totalArea, _material);
+
+        return { maxFlowDistance: _maxFlowDistance, defects, diagnostics };
+      }
+    } catch (err) {
+      console.warn("Python Voxel Solver 실패 (로컬 다익스트라로 폴백):", err);
+    }
+
+    return _doFlowCalculationFallback();
+  }
+
+  /* 로컬 다익스트라(Dijkstra) 기반 폴백 해석 로직 */
+  function _doFlowCalculationFallback() {
+    const positions = _geometry.attributes.position.array;
+    _geometry.computeBoundingBox();
+    const modelSize = new THREE.Vector3();
+    _geometry.boundingBox.getSize(modelSize);
+    const graph = _adjacencyGraph;
+
     const getVertKey = (x, y, z) => `${Math.round(x*1000)/1000},${Math.round(y*1000)/1000},${Math.round(z*1000)/1000}`;
 
-    // 멀티 소스 대안: 각 게이트별 도달 시간(Arrival Time = 거리 / 속도)을 개별 계산하여 합성
     const vertexCount = positions.length / 3;
     _flowDistances = new Float32Array(vertexCount).fill(Infinity);
     let maxDist = 0;
@@ -3490,16 +3760,17 @@ const STLAnalyzer = (() => {
     _gatePositions.forEach((gp, gIdx) => {
       const startKey = findClosestGraphNode(gp, graph);
       if (startKey) {
-        const dists = calculateFlowDistances(startKey, graph);
+        const flowRes = calculateFlowDistances(startKey, graph);
+        const dists = flowRes.distances;
+        const parents = flowRes.parents;
         const wVal = _gateVelocityRatios[gIdx] !== undefined ? _gateVelocityRatios[gIdx] : 1.0;
         
-        // 도달 시간 맵 생성
         const arrivals = {};
         for (const key in dists) {
           const d = dists[key];
           arrivals[key] = (d !== Infinity && wVal > 0) ? (d / wVal) : Infinity;
         }
-        gateArrivalsList.push(arrivals);
+        gateArrivalsList.push({ arrivals, parents });
       }
     });
 
@@ -3507,8 +3778,8 @@ const STLAnalyzer = (() => {
       const k = getVertKey(positions[i], positions[i+1], positions[i+2]);
       let minArrival = Infinity;
       
-      gateArrivalsList.forEach(arrivals => {
-        const arrival = arrivals[k];
+      gateArrivalsList.forEach(item => {
+        const arrival = item.arrivals[k];
         if (arrival !== undefined && arrival < minArrival) {
           minArrival = arrival;
         }
@@ -3521,7 +3792,6 @@ const STLAnalyzer = (() => {
     }
     _maxFlowDistance = maxDist;
 
-    // Weld line 및 air trap 결함 예측 시 물리 도달 시간 기준 합성맵 전달
     const defects = predictDefects(graph, gateArrivalsList);
     createDefectMarkers(defects);
     _flowAnimationTime = 0;
@@ -3529,14 +3799,14 @@ const STLAnalyzer = (() => {
 
     const minDim = Math.min(modelSize.x, modelSize.y, modelSize.z);
     const maxDim = Math.max(modelSize.x, modelSize.y, modelSize.z);
-    const totalArea = (positions.length / 9) * 10; // estimate
+    const totalArea = (positions.length / 9) * 10;
     const diagnostics = _getDiagnostics(minDim, maxDim, totalArea, _material);
 
     return { maxFlowDistance: _maxFlowDistance, defects, diagnostics };
   }
 
   /* 게이트 추가 */
-  function addGatePosition(worldPoint, localPoint, localNormal) {
+  async function addGatePosition(worldPoint, localPoint, localNormal) {
     if (!_mesh) return null;
     if (!localPoint) localPoint = _mesh.worldToLocal(worldPoint.clone());
     if (!worldPoint)  worldPoint  = _mesh.localToWorld(localPoint.clone());
@@ -3546,7 +3816,7 @@ const STLAnalyzer = (() => {
     const idx = _gatePositions.length - 1;
     _gateMarkers.push(createGateMarker(localPoint, localNormal, idx));
 
-    const res = _doFlowCalculation();
+    const res = await _doFlowCalculation();
     if (!res) return null;
 
     return {
@@ -3561,11 +3831,10 @@ const STLAnalyzer = (() => {
   }
 
   /* 특정 인덱스 게이트 제거 */
-  function removeGateAt(index) {
+  async function removeGateAt(index) {
     if (index < 0 || index >= _gatePositions.length) return;
 
-    // 마커 전부 제거 후 재생성 (번호 재정렬)
-    _gateMarkers.forEach(m => { if (_mesh) _mesh.remove(m); });
+    _gateMarkers.forEach(m => { if (_mesh) _mesh.remove(m); else _scene.remove(m); });
     _gateMarkers = [];
     _gatePositions.splice(index, 1);
     _gateNormals.splice(index, 1);
@@ -3576,14 +3845,14 @@ const STLAnalyzer = (() => {
       _gatePositions.forEach((pos, i) => {
         _gateMarkers.push(createGateMarker(pos, _gateNormals[i], i));
       });
-      _doFlowCalculation();
+      await _doFlowCalculation();
     }
   }
 
   /* 파팅라인 변경 등 외부에서 유동 재계산 요청 */
-  function recalculateFlow() {
+  async function recalculateFlow() {
     if (_gatePositions.length === 0) return null;
-    const res = _doFlowCalculation();
+    const res = await _doFlowCalculation();
     if (!res) return null;
     const wp = _mesh ? _mesh.localToWorld(_gatePositions[0].clone()) : new THREE.Vector3();
     return {
@@ -3684,7 +3953,494 @@ const STLAnalyzer = (() => {
   /* ──────────────────────────────────────
      PUBLIC API
   ────────────────────────────────────── */
-  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights, getCanvas, onGateRepositioned, onRightClickModel, setPhysicalParams, calculateCoolingTime, setRunnerType, setGateParams };
+  function predictSinkMarks(graph) {
+    if (!_geometry || !_vertexThickness || !graph) return { count: 0, area: 0, severity: 'LOW', details: [], recommendations: [] };
+    const details = [];
+    const recos = new Set();
+    let highCount = 0, medCount = 0, lowCount = 0;
+    
+    let totalThick = 0;
+    const keys = Object.keys(graph);
+    keys.forEach(k => {
+      totalThick += _vertexThickness[graph[k].vertIdx];
+    });
+    const avgThick = keys.length > 0 ? totalThick / keys.length : 1;
+    
+    keys.forEach(key => {
+      const node = graph[key];
+      const idx = node.vertIdx;
+      const tLocal = _vertexThickness[idx];
+      if (tLocal <= 0.2) return;
+      
+      let neighSum = 0;
+      let neighMax = 0;
+      let count = 0;
+      node.neighbors.forEach(nk => {
+        const neighNode = graph[nk];
+        if (neighNode) {
+          const tNeigh = _vertexThickness[neighNode.vertIdx];
+          neighSum += tNeigh;
+          if (tNeigh > neighMax) neighMax = tNeigh;
+          count++;
+        }
+      });
+      
+      if (count === 0) return;
+      const neighAvg = neighSum / count;
+      
+      const massRatio = tLocal / neighAvg;
+      const isMassHigh = massRatio >= 1.5;
+      
+      const ribRatio = neighMax > 0 ? (tLocal / neighMax) : 1.0;
+      let ribRisk = 'LOW';
+      if (ribRatio > 0.7) ribRisk = 'HIGH';
+      else if (ribRatio >= 0.6) ribRisk = 'MEDIUM';
+      
+      const isBossHigh = tLocal > neighAvg * 1.2;
+      
+      let risk = 'LOW';
+      if (isMassHigh || isBossHigh || ribRisk === 'HIGH') {
+        risk = 'HIGH';
+        highCount++;
+        if (isBossHigh) recos.add("Boss Core Out 적용");
+        if (ribRisk === 'HIGH') recos.add("Rib Thickness 감소");
+        if (isMassHigh) recos.add("Wall Thickness 균일화");
+      } else if (ribRisk === 'MEDIUM') {
+        risk = 'MEDIUM';
+        medCount++;
+      } else {
+        lowCount++;
+      }
+      
+      if (risk !== 'LOW') {
+        details.push({
+          pos: new THREE.Vector3(node.x, node.y, node.z),
+          risk,
+          ratio: ribRatio,
+          thickness: tLocal
+        });
+      }
+    });
+    
+    const distinct = [];
+    details.forEach(d => {
+      if (distinct.every(c => d.pos.distanceTo(c.pos) >= 15)) {
+        distinct.push(d);
+      }
+    });
+    
+    const countTotal = distinct.length;
+    const area = countTotal * 12.5;
+    let severity = 'LOW';
+    if (distinct.some(d => d.risk === 'HIGH') || countTotal > 15) {
+      severity = 'HIGH';
+      recos.add("Gate 위치 조정");
+      recos.add("Cooling 개선");
+    }
+    else if (countTotal > 5) severity = 'MEDIUM';
+    
+    return { count: countTotal, area: Math.round(area), severity, details: distinct, recommendations: Array.from(recos) };
+  }
+
+  function predictShrinkage(graph) {
+    const mat = MATERIAL_DB[_material] || MATERIAL_DB.ABS;
+    const baseShrink = mat.linearShrinkage || 0.005;
+    
+    if (!_geometry || !_vertexThickness || !graph) {
+      return { maxShrinkage: baseShrink * 100, avgShrinkage: baseShrink * 100, globalShrinkage: baseShrink * 100, riskLevel: 'LOW', details: [], recommendations: [] };
+    }
+    
+    let totalThick = 0;
+    const keys = Object.keys(graph);
+    keys.forEach(k => {
+      totalThick += _vertexThickness[graph[k].vertIdx];
+    });
+    const avgThick = keys.length > 0 ? totalThick / keys.length : 1;
+    
+    let sumShrink = 0;
+    let maxShrink = 0;
+    let count = 0;
+    const details = [];
+    const recos = new Set();
+    
+    keys.forEach(key => {
+      const node = graph[key];
+      const idx = node.vertIdx;
+      const tLocal = _vertexThickness[idx];
+      const dGate = (_flowDistances && _flowDistances[idx] !== Infinity) ? _flowDistances[idx] : (_maxFlowDistance * 0.5);
+      const gateFactor = _maxFlowDistance > 0 ? (1.0 + 0.3 * (dGate / _maxFlowDistance)) : 1.0;
+      const thickFactor = 1.0 + 0.5 * ((tLocal - avgThick) / avgThick);
+      
+      const tc = calculateCoolingTime(tLocal, _material);
+      const coolingFactor = Math.max(0.8, Math.min(1.5, tc / 15.0));
+      
+      let sLocal = baseShrink * gateFactor * thickFactor * coolingFactor;
+      sLocal = Math.max(baseShrink * 0.5, Math.min(baseShrink * 3.0, sLocal));
+      
+      sumShrink += sLocal;
+      if (sLocal > maxShrink) maxShrink = sLocal;
+      count++;
+      
+      let riskLevel = 'LOW';
+      if (sLocal >= baseShrink * 1.6) riskLevel = 'HIGH';
+      else if (sLocal >= baseShrink * 1.2) riskLevel = 'MEDIUM';
+      
+      details.push({
+        pos: new THREE.Vector3(node.x, node.y, node.z),
+        shrinkage: sLocal,
+        riskLevel
+      });
+    });
+    
+    const avgShrink = count > 0 ? (sumShrink / count) : baseShrink;
+    let riskLevel = 'LOW';
+    if (maxShrink >= baseShrink * 1.6) {
+      riskLevel = 'HIGH';
+      recos.add("Holding Pressure 증가");
+      recos.add("Holding Time 증가");
+      recos.add("Gate 확대");
+      recos.add("두께 편차 감소");
+    }
+    else if (maxShrink >= baseShrink * 1.2) {
+      riskLevel = 'MEDIUM';
+      recos.add("Cooling 균일화");
+    }
+    
+    return {
+      maxShrinkage: maxShrink * 100,
+      avgShrinkage: avgShrink * 100,
+      globalShrinkage: avgShrink * 100,
+      riskLevel,
+      details,
+      recommendations: Array.from(recos)
+    };
+  }
+
+  function predictWarpage(graph, shrinkResult) {
+    const mat = MATERIAL_DB[_material] || MATERIAL_DB.ABS;
+    const baseShrink = mat.linearShrinkage || 0.005;
+    
+    if (!_geometry || !_vertexThickness || !shrinkResult || !graph) {
+      return { score: 0, direction: '+Z', magnitude: 0, risk: 'LOW', recommendations: [] };
+    }
+    
+    const size = new THREE.Vector3();
+    _geometry.boundingBox.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z) || 1.0;
+    
+    let sumThick = 0;
+    const keys = Object.keys(graph);
+    keys.forEach(k => {
+      sumThick += _vertexThickness[graph[k].vertIdx];
+    });
+    const avgThick = keys.length > 0 ? sumThick / keys.length : 1;
+    
+    let sumSqDiff = 0;
+    keys.forEach(k => {
+      sumSqDiff += Math.pow(_vertexThickness[graph[k].vertIdx] - avgThick, 2);
+    });
+    const stdDevThick = Math.sqrt(sumSqDiff / (keys.length || 1));
+    const thickVarWeight = 1.0 + 2.0 * (stdDevThick / avgThick);
+    
+    const diffRatio = Math.abs(mat.flowShrinkage - mat.crossFlowShrinkage) / baseShrink;
+    const diffShrinkWeight = 1.0 + 2.5 * diffRatio;
+    
+    let coolingImbalance = 1.2;
+    if (_runnerType === 'cold') coolingImbalance = 1.5;
+    
+    const flowLengthWeight = _maxFlowDistance > 0 ? (1.0 + 1.0 * (_maxFlowDistance / maxDim)) : 1.2;
+    
+    let ribNodeCount = 0;
+    let bossNodeCount = 0;
+    keys.forEach(key => {
+      const node = graph[key];
+      const tLocal = _vertexThickness[node.vertIdx];
+      let maxNeigh = 0;
+      let sumNeigh = 0;
+      node.neighbors.forEach(nk => {
+        const neighNode = graph[nk];
+        if (neighNode && _vertexThickness[neighNode.vertIdx] > maxNeigh) {
+          maxNeigh = _vertexThickness[neighNode.vertIdx];
+        }
+        if (neighNode) sumNeigh += _vertexThickness[neighNode.vertIdx];
+      });
+      if (maxNeigh > 0 && tLocal / maxNeigh < 0.6) {
+        ribNodeCount++;
+      }
+      const neighAvg = node.neighbors.length > 0 ? sumNeigh / node.neighbors.length : tLocal;
+      if (tLocal > neighAvg * 1.2) bossNodeCount++;
+    });
+    const ribDensity = ribNodeCount / (keys.length || 1);
+    const ribDensityWeight = 1.0 + 3.0 * ribDensity;
+    
+    const rawScore = thickVarWeight * diffShrinkWeight * coolingImbalance * flowLengthWeight * ribDensityWeight;
+    let score = Math.min(100, Math.round((rawScore / 30.0) * 100));
+    
+    const modelCenter = new THREE.Vector3();
+    _geometry.boundingBox.getCenter(modelCenter);
+    
+    const warpVec = new THREE.Vector3();
+    shrinkResult.details.forEach(d => {
+      const diffFromAvg = d.shrinkage - (shrinkResult.avgShrinkage / 100);
+      const vecToNode = d.pos.clone().sub(modelCenter);
+      warpVec.add(vecToNode.multiplyScalar(diffFromAvg));
+    });
+    
+    let direction = '+Z';
+    if (warpVec.lengthSq() > 0.001) {
+      warpVec.normalize();
+      const ax = Math.abs(warpVec.x);
+      const ay = Math.abs(warpVec.y);
+      const az = Math.abs(warpVec.z);
+      if (ax > ay && ax > az) {
+        direction = warpVec.x > 0 ? '+X' : '-X';
+      } else if (ay > ax && ay > az) {
+        direction = warpVec.y > 0 ? '+Y' : '-Y';
+      } else {
+        direction = warpVec.z > 0 ? '+Z' : '-Z';
+      }
+    }
+    
+    const magnitude = maxDim * (shrinkResult.maxShrinkage / 100) * (score / 100) * 0.3;
+    
+    let risk = 'LOW';
+    const recos = new Set();
+    if (score >= 70) {
+      risk = 'HIGH';
+      recos.add("Cooling Channel 추가");
+      recos.add("Gate 위치 변경");
+      recos.add("Wall Thickness 균일화");
+      recos.add("재질 변경 검토");
+    } else if (score >= 40) {
+      risk = 'MEDIUM';
+      recos.add("Rib 구조 최적화");
+      recos.add("Boss 구조 최적화");
+    }
+    
+    return {
+      score,
+      direction,
+      magnitude,
+      risk,
+      recommendations: Array.from(recos)
+    };
+  }
+
+  function updateWarpArrow() {
+    if (_warpArrow) {
+      _scene.remove(_warpArrow);
+      _warpArrow = null;
+    }
+    if (!_warpOverlayActive || !_geometry) return;
+    
+    const shrinkRes = predictShrinkage(_adjacencyGraph);
+    const warpRes = predictWarpage(_adjacencyGraph, shrinkRes);
+    
+    _geometry.computeBoundingBox();
+    const box = _geometry.boundingBox;
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const size = new THREE.Vector3();
+    _geometry.boundingBox.getSize(size);
+    const radius = size.length();
+    
+    let dir = new THREE.Vector3(0, 0, 1);
+    if (warpRes.direction === '+X') dir.set(1, 0, 0);
+    else if (warpRes.direction === '-X') dir.set(-1, 0, 0);
+    else if (warpRes.direction === '+Y') dir.set(0, 1, 0);
+    else if (warpRes.direction === '-Y') dir.set(0, -1, 0);
+    else if (warpRes.direction === '+Z') dir.set(0, 0, 1);
+    else if (warpRes.direction === '-Z') dir.set(0, 0, -1);
+    
+    const arrowLen = Math.max(15, radius * 0.4);
+    const color = 0x0055ff;
+    _warpArrow = new THREE.ArrowHelper(dir, center, arrowLen, color, arrowLen * 0.25, arrowLen * 0.15);
+    _scene.add(_warpArrow);
+  }
+
+  function computeSinkColors(positions, normals) {
+    const colors = new Float32Array(positions.length);
+    
+    if (_vertexSinkRisk && _vertexSinkRisk.length > 0) {
+      for (let i = 0; i < positions.length; i += 3) {
+        const idx = i / 3;
+        const val = _vertexSinkRisk[idx] !== undefined ? _vertexSinkRisk[idx] : 0.0;
+        let r = 0.15, g = 0.12, b = 0.1;
+        if (val > 0.7) {
+          r = 1.0; g = 0.5; b = 0.0;
+        } else if (val > 0.4) {
+          r = 0.65; g = 0.32; b = 0.0;
+        }
+        colors[i] = r; colors[i+1] = g; colors[i+2] = b;
+      }
+      return colors;
+    }
+    
+    const sinkRes = predictSinkMarks(_adjacencyGraph);
+    const nodeRisk = {};
+    if (sinkRes && sinkRes.details) {
+      sinkRes.details.forEach(d => {
+        const key = `${Math.round(d.pos.x*1000)/1000},${Math.round(d.pos.y*1000)/1000},${Math.round(d.pos.z*1000)/1000}`;
+        if (_adjacencyGraph && _adjacencyGraph[key]) {
+          nodeRisk[_adjacencyGraph[key].vertIdx] = d.risk;
+        }
+      });
+    }
+    
+    for (let i = 0; i < positions.length; i += 3) {
+      const vertIdx = i / 3;
+      const risk = nodeRisk[vertIdx];
+      let r = 0.15, g = 0.12, b = 0.1;
+      if (risk === 'HIGH') {
+        r = 1.0; g = 0.5; b = 0.0;
+      } else if (risk === 'MEDIUM') {
+        r = 0.65; g = 0.32; b = 0.0;
+      }
+      colors[i] = r; colors[i+1] = g; colors[i+2] = b;
+    }
+    return colors;
+  }
+
+  function computeShrinkagePredictColors(positions, normals) {
+    const colors = new Float32Array(positions.length);
+    const shrinkRes = predictShrinkage(_adjacencyGraph);
+    const nodeShrink = {};
+    if (shrinkRes && shrinkRes.details) {
+      shrinkRes.details.forEach(d => {
+        const key = `${Math.round(d.pos.x*1000)/1000},${Math.round(d.pos.y*1000)/1000},${Math.round(d.pos.z*1000)/1000}`;
+        if (_adjacencyGraph && _adjacencyGraph[key]) {
+          nodeShrink[_adjacencyGraph[key].vertIdx] = d.shrinkage;
+        }
+      });
+    }
+    
+    const mat = MATERIAL_DB[_material] || MATERIAL_DB.ABS;
+    const baseShrink = mat.linearShrinkage || 0.005;
+    
+    for (let i = 0; i < positions.length; i += 3) {
+      const vertIdx = i / 3;
+      const val = nodeShrink[vertIdx] || baseShrink;
+      const t = Math.max(0.0, Math.min(1.0, val / (baseShrink * 2.0)));
+      // Dark gray to Yellow interpolation
+      colors[i] = 0.2 + 0.8 * t; 
+      colors[i+1] = 0.2 + 0.8 * t; 
+      colors[i+2] = 0.2 * (1.0 - t);
+    }
+    return colors;
+  }
+
+  function computeWarpageColors(positions, normals) {
+    const colors = new Float32Array(positions.length);
+    const shrinkRes = predictShrinkage(_adjacencyGraph);
+    const warpRes = predictWarpage(_adjacencyGraph, shrinkRes);
+    
+    _geometry.computeBoundingBox();
+    const center = new THREE.Vector3();
+    _geometry.boundingBox.getCenter(center);
+    
+    let warpAxis = new THREE.Vector3(0, 0, 1);
+    if (warpRes.direction === '+X') warpAxis.set(1, 0, 0);
+    else if (warpRes.direction === '-X') warpAxis.set(-1, 0, 0);
+    else if (warpRes.direction === '+Y') warpAxis.set(0, 1, 0);
+    else if (warpRes.direction === '-Y') warpAxis.set(0, -1, 0);
+    else if (warpRes.direction === '+Z') warpAxis.set(0, 0, 1);
+    else if (warpRes.direction === '-Z') warpAxis.set(0, 0, -1);
+    
+    const size = new THREE.Vector3();
+    _geometry.boundingBox.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z) || 1.0;
+    
+    for (let i = 0; i < positions.length; i += 3) {
+      const nodePos = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
+      const distFromCenter = nodePos.sub(center).dot(warpAxis);
+      const t = Math.max(0.0, Math.min(1.0, Math.abs(distFromCenter) / (maxDim * 0.5)));
+      colors[i] = 0.1 * (1.0 - t); 
+      colors[i+1] = 0.5 * (1.0 - t) + 0.3 * t; 
+      colors[i+2] = 0.4 + 0.6 * t;
+    }
+    return colors;
+  }
+
+  function toggleSinkOverlay(active) {
+    _sinkOverlayActive = active;
+    if (active) {
+      _flowOverlayActive = false;
+      _shrinkageOverlayActive = false;
+      _warpOverlayActive = false;
+    }
+    recolorGeometry();
+  }
+  
+  function toggleWarpOverlay(active) {
+    _warpOverlayActive = active;
+    if (active) {
+      _flowOverlayActive = false;
+      _shrinkageOverlayActive = false;
+      _sinkOverlayActive = false;
+    }
+    recolorGeometry();
+  }
+
+  function toggleCoolingOverlay(active) {
+    _coolingOverlayActive = active;
+    recolorGeometry();
+  }
+
+  function setVertexTemperatures(temps) {
+    _vertexTemperatures = temps;
+  }
+
+  function setFlowDistances(dists) {
+    _flowDistances = dists ? new Float32Array(dists) : null;
+  }
+  
+  function setVertexSinkRisk(risk) {
+    _vertexSinkRisk = risk ? new Float32Array(risk) : null;
+  }
+  
+  function setMaxFlowDistance(dist) {
+    _maxFlowDistance = dist;
+  }
+
+  function computeCoolingColors(positions, temperatures) {
+    const colors = new Float32Array(positions.length);
+    if (!temperatures || temperatures.length === 0) return colors;
+    
+    let minT = Infinity, maxT = -Infinity;
+    for (let i = 0; i < temperatures.length; i++) {
+      if (temperatures[i] < minT) minT = temperatures[i];
+      if (temperatures[i] > maxT) maxT = temperatures[i];
+    }
+    const range = maxT - minT || 1.0;
+    
+    for (let i = 0; i < positions.length; i += 3) {
+      const idx = i / 3;
+      const tVal = temperatures[idx] !== undefined ? temperatures[idx] : minT;
+      const t = Math.max(0.0, Math.min(1.0, (tVal - minT) / range));
+      
+      let r = 0, g = 0, b = 0;
+      if (t < 0.25) {
+        const s = t / 0.25;
+        r = 0.0; g = s * 0.8; b = 1.0;
+      } else if (t < 0.5) {
+        const s = (t - 0.25) / 0.25;
+        r = 0.0; g = 0.8 + s * 0.2; b = 1.0 - s;
+      } else if (t < 0.75) {
+        const s = (t - 0.5) / 0.25;
+        r = s; g = 1.0; b = 0.0;
+      } else {
+        const s = (t - 0.75) / 0.25;
+        r = 1.0; g = 1.0 - s; b = 0.0;
+      }
+      colors[i] = r;
+      colors[i+1] = g;
+      colors[i+2] = b;
+    }
+    return colors;
+  }
+
+  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights, getCanvas, onGateRepositioned, onRightClickModel, setPhysicalParams, calculateCoolingTime, setRunnerType, setGateParams, toggleSinkOverlay, toggleWarpOverlay, toggleCoolingOverlay, setVertexTemperatures, setFlowDistances, setVertexSinkRisk, setMaxFlowDistance, predictSinkMarks, predictShrinkage, predictWarpage };
+
 
 
 })();
