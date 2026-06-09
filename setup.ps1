@@ -23,24 +23,24 @@ if ($procs) {
     Write-Host "      No existing DIMA processes found." -ForegroundColor Gray
 }
 
-# 1. Check if DIMA.exe exists; if not, compile it
-Write-Host "[1/5] Checking DIMA.exe..." -ForegroundColor Yellow
+# 1. Compile DIMA.exe to make sure it is updated
+Write-Host "[1/5] Compiling DIMA.exe to ensure latest version..." -ForegroundColor Yellow
 $ExePath = Join-Path $ScriptDir "DIMA.exe"
-if (-not (Test-Path $ExePath)) {
-    Write-Host "      DIMA.exe not found. Compiling..." -ForegroundColor Gray
-    $compileScript = Join-Path $ScriptDir "compile_exe.ps1"
-    if (Test-Path $compileScript) {
-        & $compileScript
-        if (-not (Test-Path $ExePath)) {
-            Write-Host "[ERROR] Failed to compile DIMA.exe. Please check .NET Framework installation." -ForegroundColor Red
-            Read-Host "Press Enter to exit"
-            exit 1
-        }
-    } else {
-        Write-Host "[ERROR] compile_exe.ps1 not found." -ForegroundColor Red
+$compileScript = Join-Path $ScriptDir "compile_exe.ps1"
+if (Test-Path $compileScript) {
+    if (Test-Path $ExePath) {
+        Remove-Item $ExePath -Force -ErrorAction SilentlyContinue
+    }
+    & $compileScript
+    if (-not (Test-Path $ExePath)) {
+        Write-Host "[ERROR] Failed to compile DIMA.exe. Please check .NET Framework installation." -ForegroundColor Red
         Read-Host "Press Enter to exit"
         exit 1
     }
+} else {
+    Write-Host "[ERROR] compile_exe.ps1 not found." -ForegroundColor Red
+    Read-Host "Press Enter to exit"
+    exit 1
 }
 Write-Host "      DIMA.exe ready ($([math]::Round((Get-Item $ExePath).Length / 1KB, 1)) KB)" -ForegroundColor Gray
 
@@ -55,8 +55,8 @@ Write-Host "      Install Path: $InstallDir" -ForegroundColor Gray
 
 # 3. Copy files
 Write-Host "[3/5] Copying files..." -ForegroundColor Yellow
-$CopyTargets = @("index.html", "DIMA.exe", "compile_exe.ps1")
-$CopyFolders = @("css", "js", "libs", "samples")
+$CopyTargets = @("index.html", "DIMA.exe", "compile_exe.ps1", "server.py", "cooling_solver.py", "flow_solver.py", "sinkmark_solver.py", "requirements.txt", ".env")
+$CopyFolders = @("css", "js", "libs", "samples", "python_backend")
 
 $copiedCount = 0
 foreach ($file in $CopyTargets) {

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DIMA — Design Integrity & Manufacturability AI</title>
   <meta name="description" content="AI 기반 2D 도면 검증 및 3D 사출성형성 예측 플랫폼" />
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=7" />
 </head>
 <body>
 
@@ -657,9 +657,36 @@
   <script src="libs/three.min.js"></script>
   <script src="libs/OrbitControls.js"></script>
   <script src="libs/STLLoader.js"></script>
-  <script src="js/dxf-analyzer.js?v=2"></script>
-  <script src="js/stl-analyzer.js?v=2"></script>
-  <script src="js/main.js?v=2"></script>
+  <script src="js/dxf-analyzer.js?v=7"></script>
+  <script src="js/stl-analyzer.js?v=7"></script>
+  <script src="js/main.js?v=7"></script>
   <script src="js/app.js"></script>
+  <script src="js/ai-dashboard.js?v=7"></script>
+  <!-- ───── TAB CLICK FALLBACK (보강: 탭 전환 보장) ───── -->
+  <script>
+  /* DIMA_TAB_FALLBACK: 다른 스크립트 로드 실패와 무관하게 탭 클릭 보장 */
+  (function () {
+    function activate(id) {
+      document.querySelectorAll('.nav-tab').forEach(function (b) {
+        b.classList.toggle('active', b.dataset.tab === id);
+      });
+      document.querySelectorAll('.tab-content').forEach(function (c) {
+        c.classList.toggle('active', c.id === 'content-' + id);
+      });
+      try { if (typeof switchTab === 'function') switchTab(id); } catch (e) {}
+      try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    }
+    function bind() {
+      document.querySelectorAll('.nav-tab').forEach(function (btn) {
+        btn.addEventListener('click', function () { activate(btn.dataset.tab); });
+      });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', bind);
+    } else {
+      bind();
+    }
+  })();
+  </script>
 </body>
 </html>

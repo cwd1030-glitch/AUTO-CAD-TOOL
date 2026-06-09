@@ -94,10 +94,8 @@ const STLAnalyzer = (() => {
   }
 
   async function parseSTP(buffer) {
-    if (!window.SharedArrayBuffer) {
-      throw new Error('SharedArrayBuffer 미지원 — WASM 엔진 초기화 불가. COOP/COEP 헤더가 필요합니다.');
-    }
-
+    // SharedArrayBuffer 하드 차단 제거: occt-import-js는 단일 스레드(WASM)로도 동작한다.
+    // (Electron/로컬 서버 환경에서 COOP/COEP가 없어도 STEP 파싱이 가능하도록 허용)
     try {
       await loadScript('libs/occt-import-js.js');
     } catch (e) {
@@ -271,7 +269,7 @@ const STLAnalyzer = (() => {
         tempPts.push(parseFloat(vm[1]), parseFloat(vm[2]), parseFloat(vm[3]));
       }
       if (validFacet) {
-        positions.push(...tempPts);
+        for (let _p=0;_p<tempPts.length;_p++) positions.push(tempPts[_p]);
         normals.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
       } else {
         break;
@@ -1134,7 +1132,7 @@ const STLAnalyzer = (() => {
 
       while (queue.length > 0) {
         const curr = queue.shift();
-        componentPoints.push(...cells[curr]);
+        var _cc=cells[curr]; for (let _p=0;_p<_cc.length;_p++) componentPoints.push(_cc[_p]);
         
         const neighbors = getNeighbors(curr);
         neighbors.forEach(n => {

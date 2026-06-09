@@ -1,54 +1,24 @@
 @echo off
-chcp 65001 >nul
-echo.
-echo  ╔═══════════════════════════════════════╗
-echo  ║   DIMA - Design Intelligence AI       ║
-echo  ║   설계 검증 AI 플랫폼                 ║
-echo  ╚═══════════════════════════════════════╝
-echo.
+setlocal
+cd /d "%~dp0"
+set "HTML=%~dp0index.html"
 
-:: 현재 폴더 경로 가져오기
-set DIR=%~dp0
-
-:: index.html 절대 경로
-set HTML=%DIR%index.html
-
-:: DIMA.exe 실행 파일이 있으면 로컬 HTTP 서버 실행
-if exist "%DIR%DIMA.exe" (
-    echo  [0] DIMA.exe (로컬 HTTP 서버) 실행 중...
-    start "" "%DIR%DIMA.exe"
-    goto :success
+if exist "%~dp0DIMA.exe" (
+    echo Starting DIMA.exe ^(local HTTP server^) ... http://localhost:8899
+    start "" "%~dp0DIMA.exe"
+    goto done
 )
 
-echo  [1] Chrome으로 실행 시도 중...
-set CHROME="%ProgramFiles%\Google\Chrome\Application\chrome.exe"
-set CHROME86="%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
-
-if exist %CHROME% (
-    start "" %CHROME% --allow-file-access-from-files "%HTML%"
-    goto :success
-)
-if exist %CHROME86% (
-    start "" %CHROME86% --allow-file-access-from-files "%HTML%"
-    goto :success
-)
-
-echo  [2] Edge로 실행 시도 중...
-set EDGE="%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
-if exist %EDGE% (
-    start "" %EDGE% --allow-file-access-from-files "%HTML%"
-    goto :success
-)
-
-echo  [3] 기본 브라우저로 열기...
+echo DIMA.exe not found. Opening in browser ^(STP will NOT work via file://^).
+set "CHROME=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
+set "CHROME86=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
+set "EDGE=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
+if exist "%CHROME%" ( start "" "%CHROME%" "%HTML%" & goto done )
+if exist "%CHROME86%" ( start "" "%CHROME86%" "%HTML%" & goto done )
+if exist "%EDGE%" ( start "" "%EDGE%" "%HTML%" & goto done )
 start "" "%HTML%"
 
-:success
+:done
 echo.
-echo  ✅ DIMA 앱이 브라우저에서 열렸습니다!
-echo.
-echo  테스트 파일 위치:
-echo    2D 파일: samples\sample_bracket.dxf
-echo    3D 파일: samples\sample_part.stl
-echo.
-timeout /t 3 /nobreak >nul
+echo DIMA launched. If STP fails, make sure the address bar shows http://localhost
+timeout /t 2 /nobreak >nul
