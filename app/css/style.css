@@ -1,0 +1,1387 @@
+/* ═══════════════════════════════════════════
+   DIMA — Design Intelligence Web App
+   Dark Premium Theme
+═══════════════════════════════════════════ */
+
+/* 오프라인 폰트 - 시스템 폰트 폴백 */
+@font-face {
+  font-family: 'Outfit';
+  src: local('Outfit'), local('Segoe UI'), local('Noto Sans KR');
+  font-weight: 100 900;
+  font-style: normal;
+}
+
+/* ── Variables ── */
+:root {
+  --bg-base:    #080c18;
+  --bg-surface: #0e1525;
+  --bg-card:    rgba(14,21,37,0.85);
+  --bg-glass:   rgba(255,255,255,0.04);
+  --border:     rgba(0,212,255,0.15);
+  --border-dim: rgba(255,255,255,0.06);
+
+  --cyan:       #00d4ff;
+  --cyan-dim:   rgba(0,212,255,0.15);
+  --cyan-glow:  0 0 20px rgba(0,212,255,0.35);
+
+  --green:  #00ffa3;
+  --yellow: #ffd166;
+  --red:    #ff4d6d;
+  --orange: #ff8800;
+
+  --text-primary:   #e8f0fe;
+  --text-secondary: #7a8fb0;
+  --text-muted:     #3d5278;
+
+  --panel-w: 280px;
+  --header-h: 52px;
+  --radius-lg: 16px;
+  --radius-md: 10px;
+  --radius-sm: 6px;
+  --transition: 0.22s cubic-bezier(.4,0,.2,1);
+}
+
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Malgun Gothic", "Noto Sans KR", sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  overflow: hidden;
+  background-image:
+    radial-gradient(ellipse 70% 50% at 70% 20%, rgba(0,80,160,0.18) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 40% at 20% 80%, rgba(0,212,255,0.07) 0%, transparent 60%);
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+/* ═══════════ HEADER ═══════════ */
+#app-header {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  height: var(--header-h);
+  display: flex; align-items: center; gap: 1rem; padding: 0 1.2rem;
+  background: rgba(8,12,24,0.88);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.header-logo { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+.logo-hex { width: 36px; height: 36px; filter: drop-shadow(0 0 8px var(--cyan)); }
+.logo-text-wrap { display: flex; flex-direction: column; line-height: 1; }
+.logo-main { font-size: 1rem; font-weight: 800; letter-spacing: 2px; color: var(--cyan); }
+.logo-sub  { font-size: 0.52rem; font-weight: 400; color: var(--text-secondary); letter-spacing: 1px; text-transform: uppercase; margin-top: 1px; }
+
+/* Nav tabs */
+.header-nav { display: flex; gap: 4px; background: var(--bg-glass); border: 1px solid var(--border-dim); border-radius: 99px; padding: 4px; }
+.nav-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 18px; border-radius: 99px; border: none; cursor: pointer;
+  font-family: inherit; font-size: 0.82rem; font-weight: 500;
+  color: var(--text-secondary); background: transparent;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.nav-tab:hover  { color: var(--text-primary); background: var(--bg-glass); }
+.nav-tab.active { color: var(--bg-base); background: var(--cyan); box-shadow: var(--cyan-glow); }
+.tab-icon { font-size: 0.9rem; }
+
+/* Status */
+.header-status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: var(--text-secondary); }
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted);
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.status-dot.ready  { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.status-dot.busy   { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); animation: pulse-dot 1s infinite; }
+.status-dot.error  { background: var(--red); box-shadow: 0 0 8px var(--red); }
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* ═══════════ MAIN ═══════════ */
+#app-main {
+  position: fixed; top: var(--header-h); left: 0; right: 0; bottom: 0;
+}
+
+/* Tab content */
+.tab-content { position: absolute; inset: 0; display: none; }
+.tab-content.active { display: flex; }
+
+/* Workspace */
+.workspace { display: flex; width: 100%; height: 100%; gap: 0; }
+
+/* ═══════════ PANELS ═══════════ */
+.panel-left {
+  width: var(--panel-w); min-width: var(--panel-w);
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-dim);
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 18px 16px;
+  overflow-y: auto; overflow-x: hidden;
+}
+
+.panel-viewer {
+  flex: 1; position: relative; overflow: hidden;
+  background: radial-gradient(ellipse at center, #0d1530 0%, var(--bg-base) 100%);
+}
+
+.panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border-dim);
+}
+.panel-header h2 { font-size: 0.95rem; font-weight: 600; color: var(--text-primary); }
+.panel-badge {
+  font-size: 0.65rem; font-weight: 600; padding: 3px 9px; border-radius: 99px;
+  background: var(--cyan-dim); color: var(--cyan); letter-spacing: 0.5px; text-transform: uppercase;
+}
+
+/* ═══════════ UPLOAD ZONE ═══════════ */
+.upload-zone {
+  border: 2px dashed var(--border); border-radius: var(--radius-lg);
+  padding: 24px 16px; text-align: center; cursor: pointer;
+  transition: var(--transition); position: relative;
+  background: var(--bg-glass);
+}
+.upload-zone:hover, .upload-zone.drag-over {
+  border-color: var(--cyan); background: var(--cyan-dim);
+  box-shadow: var(--cyan-glow);
+}
+.upload-icon { font-size: 2rem; margin-bottom: 8px; }
+.upload-text  { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5; }
+.upload-hint  { font-size: 0.7rem; color: var(--text-muted); margin-top: 6px; }
+
+/* ═══════════ FILE INFO ═══════════ */
+.file-info-bar {
+  background: var(--bg-glass); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm); padding: 8px 12px;
+  font-size: 0.75rem; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 8px;
+}
+.file-info-bar span { color: var(--cyan); font-weight: 600; }
+
+/* ═══════════ BUTTONS ═══════════ */
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 20px; border-radius: var(--radius-md); border: none;
+  font-family: inherit; font-size: 0.82rem; font-weight: 600;
+  cursor: pointer; width: 100%; transition: var(--transition);
+  white-space: nowrap;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--cyan), #0099cc);
+  color: #000; box-shadow: var(--cyan-glow);
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 0 30px rgba(0,212,255,0.5); }
+.btn-primary:active { transform: translateY(0); }
+.btn-outline {
+  background: transparent; color: var(--cyan);
+  border: 1px solid var(--cyan); padding: 8px 20px; width: auto;
+}
+.btn-outline:hover { background: var(--cyan-dim); }
+
+/* ═══════════ MATERIAL GRID ═══════════ */
+.material-section { display: flex; flex-direction: column; gap: 8px; }
+.section-label { font-size: 0.72rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; }
+.material-grid { display: grid; gap: 6px; }
+.material-grid.materials {
+  grid-template-columns: repeat(5, 1fr);
+}
+.material-grid.axes {
+  grid-template-columns: repeat(3, 1fr);
+}
+.mat-btn {
+  background: var(--bg-glass); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm); padding: 6px 2px; cursor: pointer;
+  font-family: inherit; font-size: 0.72rem; font-weight: 600;
+  color: var(--text-secondary); text-align: center; line-height: 1.3;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.mat-btn small { font-size: 0.58rem; color: var(--text-muted); font-weight: 400; display: block; }
+.axis-btn {
+  background: var(--bg-glass); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-sm); padding: 8px 4px; cursor: pointer;
+  font-family: inherit; font-size: 0.76rem; font-weight: 600;
+  color: var(--text-secondary); text-align: center; line-height: 1.3;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.mat-btn:hover, .axis-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.mat-btn.active, .axis-btn.active { border-color: var(--cyan); background: var(--cyan-dim); color: var(--cyan); }
+
+/* ═══════════ SCORE CARD ═══════════ */
+.results-panel { display: flex; flex-direction: column; gap: 14px; }
+.score-card {
+  background: var(--bg-glass); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 18px 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  box-shadow: inset 0 0 30px rgba(0,212,255,0.04);
+}
+.score-ring-wrap { position: relative; width: 100px; height: 100px; }
+.score-ring { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring-bg   { fill: none; stroke: var(--bg-base); stroke-width: 8; }
+.ring-fill {
+  fill: none; stroke: var(--cyan); stroke-width: 8;
+  stroke-linecap: round;
+  stroke-dasharray: 263.9; stroke-dashoffset: 263.9;
+  transition: stroke-dashoffset 1.2s cubic-bezier(.4,0,.2,1), stroke 0.4s;
+  filter: drop-shadow(0 0 6px var(--cyan));
+}
+.score-center {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+.score-number { font-size: 1.6rem; font-weight: 800; color: var(--text-primary); line-height: 1; }
+.score-label-sm { font-size: 0.65rem; color: var(--text-muted); }
+.score-grade {
+  font-size: 0.85rem; font-weight: 700; letter-spacing: 1px;
+  padding: 4px 16px; border-radius: 99px; background: var(--cyan-dim); color: var(--cyan);
+}
+
+/* ═══════════ LEGEND ═══════════ */
+.legend-row {
+  display: flex; gap: 12px; margin-top: 10px; font-size: 0.85rem; justify-content: center;
+}
+.leg-dot {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px;
+}
+.leg-dot.green { background: #00ffa3; }
+.leg-dot.yellow { background: #ffd166; }
+.leg-dot.red { background: #ff4d6d; }
+
+/* Mold Features Panel */
+.mold-features {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.feature-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 6px;
+}
+.feature-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.feature-desc {
+  font-size: 0.85rem;
+  color: #a0a5b5;
+  text-align: right;
+  line-height: 1.4;
+}
+
+/* ═══════════ ISSUES LIST ═══════════ */
+.issues-list { display: flex; flex-direction: column; gap: 6px; }
+.issue-item {
+  background: var(--bg-glass); border-radius: var(--radius-sm);
+  border-left: 3px solid transparent;
+  padding: 9px 12px; font-size: 0.75rem; line-height: 1.5;
+  color: var(--text-secondary); animation: slideIn 0.3s ease both;
+}
+.issue-item.error   { border-color: var(--red);    background: rgba(255,77,109,0.06); }
+.issue-item.warning { border-color: var(--yellow); background: rgba(255,209,102,0.06); }
+.issue-item.info    { border-color: var(--cyan);   background: var(--cyan-dim); }
+.issue-item.ok      { border-color: var(--green);  background: rgba(0,255,163,0.06); }
+.issue-title { font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
+.issue-badge {
+  display: inline-block; font-size: 0.6rem; font-weight: 700; padding: 2px 7px;
+  border-radius: 99px; letter-spacing: 0.5px; text-transform: uppercase; margin-right: 6px;
+}
+.badge-error   { background: rgba(255,77,109,0.2); color: var(--red); }
+.badge-warning { background: rgba(255,209,102,0.2); color: var(--yellow); }
+.badge-info    { background: var(--cyan-dim); color: var(--cyan); }
+.badge-ok      { background: rgba(0,255,163,0.15); color: var(--green); }
+
+@keyframes slideIn { from{opacity:0;transform:translateX(-10px)} to{opacity:1;transform:none} }
+
+/* ═══════════ VIEWER ═══════════ */
+.viewer-placeholder {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px;
+  color: var(--text-muted); text-align: center;
+}
+.placeholder-glyph { font-size: 4rem; opacity: 0.3; animation: float 4s ease-in-out infinite; }
+.viewer-placeholder p { font-size: 0.85rem; line-height: 1.6; color: var(--text-muted); }
+
+@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
+
+#canvas-2d { display: block; cursor: grab; }
+#canvas-2d:active { cursor: grabbing; }
+
+.viewer-toolbar {
+  position: absolute; top: 14px; right: 14px; z-index: 10;
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(8,12,24,0.85); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md); padding: 6px; backdrop-filter: blur(10px);
+}
+.horizontal-viewer-toolbar {
+  flex-direction: row;
+  align-items: center;
+  padding: 6px 10px;
+  gap: 6px;
+}
+.tool-btn {
+  width: 34px; height: 34px; border-radius: var(--radius-sm); border: none;
+  background: transparent; color: var(--text-secondary); font-size: 1rem;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.horizontal-viewer-toolbar .tool-btn {
+  width: auto;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 0.78rem;
+  font-family: inherit;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tool-btn:hover, .tool-btn.active { background: var(--cyan-dim); color: var(--cyan); }
+.tool-sep { height: 1px; background: var(--border-dim); margin: 2px 0; }
+.tool-sep-v { width: 1px; height: 18px; background: var(--border-dim); margin: 0 4px; }
+
+/* ═══════════ REPORT ═══════════ */
+.report-wrap {
+  width: 100%; height: 100%; overflow-y: auto; padding: 32px 40px;
+  display: flex; flex-direction: column; gap: 24px;
+}
+.report-header-bar {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.report-header-bar h1 { font-size: 1.3rem; font-weight: 700; }
+.report-empty { 
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; height: 60vh; color: var(--text-muted); font-size: 0.9rem;
+}
+.report-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.report-card {
+  background: var(--bg-card); border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg); padding: 24px; backdrop-filter: blur(10px);
+}
+.report-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: var(--cyan); }
+.report-stat { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-dim); font-size: 0.82rem; }
+.report-stat:last-child { border-bottom: none; }
+.stat-label { color: var(--text-secondary); }
+.stat-value { font-weight: 600; color: var(--text-primary); }
+
+/* ═══════════ LOADING OVERLAY ═══════════ */
+.loading-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: rgba(8,12,24,0.85); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+}
+.loading-box {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 40px 48px;
+  display: flex; flex-direction: column; align-items: center; gap: 20px;
+  box-shadow: 0 0 60px rgba(0,212,255,0.15);
+  min-width: 280px;
+}
+.spinner {
+  width: 48px; height: 48px; border-radius: 50%;
+  border: 3px solid var(--border-dim);
+  border-top-color: var(--cyan);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 0.9rem; color: var(--text-secondary); font-weight: 500; }
+.progress-track { width: 200px; height: 4px; background: var(--bg-base); border-radius: 99px; overflow: hidden; }
+.progress-bar {
+  height: 100%; width: 0; border-radius: 99px;
+  background: linear-gradient(90deg, var(--cyan), #0099cc);
+  transition: width 0.3s ease;
+  box-shadow: 0 0 8px var(--cyan);
+}
+
+/* ═══════════ TOAST ═══════════ */
+.toast {
+  position: fixed; bottom: 24px; right: 24px; z-index: 600;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md); padding: 12px 20px;
+  font-size: 0.82rem; color: var(--text-primary);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4), var(--cyan-glow);
+  transform: translateY(80px); opacity: 0;
+  transition: transform 0.35s cubic-bezier(.4,0,.2,1), opacity 0.35s;
+  pointer-events: none; max-width: 320px;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+
+/* ── Flow Simulation Controls ── */
+.flow-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(8, 12, 24, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 30px;
+  padding: 8px 16px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), var(--cyan-glow);
+  width: 90%;
+  max-width: 480px;
+}
+.flow-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--cyan-dim);
+  color: var(--cyan);
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+.flow-btn:hover {
+  background: var(--cyan);
+  color: var(--bg-base);
+  box-shadow: 0 0 10px var(--cyan);
+}
+.flow-slider {
+  flex: 1;
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.flow-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--cyan);
+  cursor: pointer;
+  box-shadow: 0 0 8px var(--cyan);
+  transition: var(--transition);
+}
+.flow-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+.flow-time {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-family: monospace;
+  min-width: 80px;
+  text-align: right;
+}
+
+/* Legend Colors */
+.leg-dot.orange { background: #ff8800; }
+.leg-dot.blue   { background: #0033ff; }
+.leg-dot.cyan   { background: #00ccff; }
+
+/* ═══════════════════════════════════════════
+   PRINT STYLES (PDF EXPORT)
+   ═══════════════════════════════════════════ */
+@media print {
+  body {
+    background: #ffffff !important;
+    background-image: none !important;
+    color: #080c18 !important;
+  }
+  #app-header, 
+  .report-header-bar button, 
+  .header-status, 
+  aside, 
+  .viewer-toolbar, 
+  .workspace aside, 
+  .workspace section,
+  #toast,
+  .loading-overlay {
+    display: none !important;
+  }
+  #app-main {
+    position: relative !important;
+    top: 0 !important;
+    height: auto !important;
+  }
+  .report-wrap {
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+  .report-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 20px !important;
+  }
+  .report-card {
+    background: #ffffff !important;
+    color: #080c18 !important;
+    border: 1px solid #c5d2e8 !important;
+    box-shadow: none !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    backdrop-filter: none !important;
+  }
+  .report-card h3 {
+    color: #0088cc !important;
+  }
+  .report-stat {
+    border-bottom: 1px solid #e1eaf7 !important;
+  }
+  .stat-label {
+    color: #4b5e7d !important;
+  }
+  .stat-value {
+    color: #080c18 !important;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   CREO CAD STYLE WORKSPACE EXTENSION
+   ═══════════════════════════════════════════ */
+
+:root {
+  --creo-bg-dark:    rgba(22, 25, 34, 0.8);
+  --creo-bg-panel:   rgba(31, 36, 48, 0.65);
+  --creo-bg-ribbon:  rgba(26, 30, 40, 0.85);
+  --creo-border-cad: rgba(42, 49, 66, 0.7);
+  --creo-active:     #00d4ff;
+  --creo-active-bg:  rgba(0, 212, 255, 0.12);
+  --header-h:        48px; /* Slim compact header */
+  --panel-w:         14.5vw; /* Model tree width (14.5%) */
+  --prop-w:          14.5vw; /* Properties panel width (14.5%) */
+  --console-h:       0px;   /* Bottom console hidden */
+}
+
+/* Override App Main placement for tall Ribbon */
+#app-main.creo-workspace {
+  top: var(--header-h);
+  bottom: 0;
+  background: #0f1118;
+}
+
+/* --- CREO Ribbon Header --- */
+.creo-ribbon-header {
+  height: var(--header-h) !important;
+  background: var(--creo-bg-ribbon) !important;
+  backdrop-filter: blur(24px) !important;
+  border-bottom: 2px solid var(--creo-border-cad) !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: stretch !important;
+  padding: 0 12px !important;
+  gap: 0 !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+.creo-ribbon-header .header-logo {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  border-right: 1px solid var(--creo-border-cad);
+  padding-right: 15px;
+  margin-right: 15px;
+  min-width: 130px;
+}
+.creo-ribbon-header .logo-hex {
+  width: 28px;
+  height: 28px;
+}
+.creo-ribbon-header .logo-main {
+  font-size: 0.95rem;
+  letter-spacing: 1.5px;
+}
+.creo-ribbon-header .logo-sub {
+  font-size: 0.52rem;
+  margin-top: 1px;
+}
+
+.ribbon-tabs-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Navigation Tabs inside Ribbon */
+.ribbon-tabs {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  height: 30px;
+  display: flex !important;
+  align-items: flex-end !important;
+}
+
+.ribbon-tabs .nav-tab {
+  border-radius: 4px 4px 0 0 !important;
+  background: rgba(255,255,255,0.02) !important;
+  border: 1px solid var(--creo-border-cad) !important;
+  border-bottom: none !important;
+  color: var(--text-secondary) !important;
+  padding: 4px 16px !important;
+  font-size: 0.76rem !important;
+  height: 26px;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+  margin-right: 2px;
+}
+.ribbon-tabs .nav-tab:hover {
+  background: rgba(255,255,255,0.06) !important;
+  color: #fff !important;
+}
+.ribbon-tabs .nav-tab.active {
+  background: var(--creo-bg-panel) !important;
+  color: var(--creo-active) !important;
+  border-top: 2px solid var(--creo-active) !important;
+}
+
+/* Ribbon Panel holding command groups */
+.ribbon-panels {
+  flex: 1;
+  background: var(--creo-bg-panel);
+  backdrop-filter: blur(24px);
+  border: 1px solid var(--creo-border-cad);
+  border-bottom: none;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: stretch;
+}
+.ribbon-panel {
+  display: none;
+  height: 100%;
+}
+.ribbon-panel.active {
+  display: flex;
+  align-items: stretch;
+}
+
+/* Ribbon Group (Section box with label at the bottom) */
+.ribbon-group {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--creo-border-cad);
+  padding: 4px 8px;
+  min-width: 60px;
+  justify-content: space-between;
+}
+.ribbon-group-title {
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 3px;
+  font-weight: 700;
+}
+.ribbon-group-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Ribbon Buttons */
+.ribbon-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  height: 52px;
+  min-width: 64px;
+  transition: var(--transition);
+}
+.ribbon-btn:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--creo-border-cad);
+}
+.ribbon-btn-icon {
+  font-size: 1.3rem;
+  margin-bottom: 2px;
+}
+.ribbon-btn-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+.btn-primary-style {
+  background: var(--creo-active-bg) !important;
+  border: 1px solid var(--creo-active) !important;
+  color: var(--creo-active) !important;
+}
+.btn-primary-style:hover {
+  background: var(--creo-active) !important;
+  color: #000 !important;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.4);
+}
+
+.ribbon-btn-sm {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--creo-border-cad);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 600;
+  transition: var(--transition);
+}
+.ribbon-btn-sm:hover, .ribbon-btn-sm.active {
+  border-color: var(--creo-active);
+  color: var(--creo-active);
+  background: var(--creo-active-bg);
+}
+
+.ribbon-btn-tool {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--creo-border-cad);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.ribbon-btn-tool:hover {
+  border-color: var(--creo-active);
+  color: var(--creo-active);
+  background: rgba(0, 212, 255, 0.05);
+}
+.ribbon-btn-tool.active {
+  border-color: var(--creo-active);
+  background: var(--creo-active-bg);
+  color: var(--creo-active);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.2);
+}
+
+.ribbon-file-info {
+  font-size: 0.65rem;
+  color: var(--creo-active);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--creo-border-cad);
+  background: rgba(0,0,0,0.2);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* Material Selector in Ribbon */
+.ribbon-material-selector {
+  display: flex;
+  gap: 3px;
+}
+.ribbon-mat-btn {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--creo-border-cad);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  padding: 6px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: var(--transition);
+}
+.ribbon-mat-btn:hover {
+  color: var(--creo-active);
+  border-color: var(--creo-active);
+}
+.ribbon-mat-btn.active {
+  background: var(--creo-active-bg);
+  border-color: var(--creo-active);
+  color: var(--creo-active);
+}
+
+/* Axis Layout in Ribbon */
+.axis-controls-layout {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start !important;
+  gap: 2px !important;
+}
+.axis-buttons {
+  display: flex;
+  gap: 3px;
+}
+.ribbon-axis-btn {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--creo-border-cad);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  padding: 3px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-weight: bold;
+}
+.ribbon-axis-btn.active {
+  background: var(--creo-active-bg);
+  border-color: var(--creo-active);
+  color: var(--creo-active);
+}
+.ribbon-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-top: 2px;
+}
+.ribbon-checkbox-label input {
+  accent-color: var(--creo-active);
+  width: 10px;
+  height: 10px;
+}
+
+/* Ribbon Layout Structures */
+.overlay-buttons-layout, .view-buttons-layout {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.shading-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* --- Layout of Main Workspace --- */
+.workspace-layout {
+  display: flex;
+  width: 100%;
+  height: calc(100% - var(--console-h, 60px));
+  position: absolute;
+  top: 0;
+  bottom: var(--console-h, 60px);
+  transition: height 0.25s ease, bottom 0.25s ease;
+}
+
+/* Left Model Tree Sidebar */
+.cad-model-tree-panel {
+  width: var(--panel-w);
+  min-width: var(--panel-w);
+  background: var(--creo-bg-panel);
+  backdrop-filter: blur(24px);
+  border-right: 2px solid var(--creo-border-cad);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-shadow: 2px 0 20px rgba(0, 0, 0, 0.2);
+}
+.cad-model-tree-panel .panel-header, .cad-properties-panel .panel-header {
+  background: var(--creo-bg-dark);
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--creo-border-cad);
+}
+.cad-model-tree-panel .panel-header h3, .cad-properties-panel .panel-header h3 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+.model-tree-content {
+  padding: 10px;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+/* Tree Styling */
+.tree-root, .tree-root ul {
+  list-style: none;
+  padding-left: 14px;
+}
+.tree-root {
+  padding-left: 0;
+}
+.tree-node {
+  display: flex;
+  align-items: center;
+  font-size: 0.76rem;
+  color: #cdd6e4;
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: default;
+  white-space: nowrap;
+}
+.hover-tree-node:hover {
+  background: rgba(255,255,255,0.05);
+}
+.tree-arrow {
+  font-size: 0.5rem;
+  color: var(--text-muted);
+  width: 12px;
+  display: inline-block;
+  cursor: pointer;
+}
+.tree-icon {
+  margin-right: 6px;
+  font-size: 0.85rem;
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+}
+.tree-leaf {
+  padding-left: 10px;
+}
+
+/* Center 3D Viewport */
+.cad-viewport-panel {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(circle at center, #1b2030 0%, #0a0c12 100%);
+  border-right: 1px solid var(--creo-border-cad);
+}
+
+/* Right Properties/Results Sidebar */
+.cad-properties-panel {
+  width: var(--prop-w);
+  min-width: var(--prop-w);
+  background: var(--creo-bg-panel);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.properties-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Bottom Message Console - Hidden for spacious viewport */
+.cad-message-console {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--console-h, 0px);
+  background: var(--creo-bg-dark);
+  border-top: 2px solid var(--creo-border-cad);
+  display: none !important; /* Completely hide console */
+  flex-direction: column;
+  z-index: 10;
+  transition: height 0.25s ease;
+}
+.cad-message-console.collapsed {
+  height: 24px;
+  overflow: hidden;
+}
+.cad-message-console.collapsed .console-body {
+  display: none;
+}
+.console-header {
+  height: 22px;
+  min-height: 22px;
+  background: #11141b;
+  border-bottom: 1px solid var(--creo-border-cad);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+}
+.console-title {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.console-clear-btn {
+  font-size: 0.62rem;
+  color: var(--creo-active);
+  cursor: pointer;
+  font-weight: bold;
+}
+.console-clear-btn:hover {
+  text-decoration: underline;
+}
+.console-body {
+  flex: 1;
+  padding: 6px 12px;
+  overflow-y: auto;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.72rem;
+  background: #090b0f;
+  color: #a3b8cc;
+  line-height: 1.4;
+}
+.log-line {
+  margin-bottom: 2px;
+  white-space: pre-wrap;
+}
+.log-line.system {
+  color: #566c85;
+}
+.log-line.info {
+  color: var(--creo-active);
+}
+.log-line.warning {
+  color: var(--yellow);
+}
+.log-line.error {
+  color: var(--red);
+}
+.log-line.success {
+  color: var(--green);
+}
+
+/* ═══════════════════════════════════════════
+   DRAG RESIZER SPLITTER STYLE
+   ═══════════════════════════════════════════ */
+.cad-resizer {
+  width: 4px;
+  cursor: col-resize;
+  background: var(--creo-border-cad);
+  transition: background 0.15s, width 0.15s, box-shadow 0.15s;
+  z-index: 20;
+  position: relative;
+  align-self: stretch;
+}
+.cad-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: -4px; right: -4px;
+  cursor: col-resize;
+}
+.cad-resizer:hover, .cad-resizer.dragging {
+  background: var(--cyan);
+  width: 6px;
+  box-shadow: 0 0 10px var(--cyan);
+}
+
+/* Runner Button Style */
+.runner-btn {
+  background: var(--bg-glass);
+  border: 1px solid var(--creo-border-cad);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: center;
+  font-family: inherit;
+  transition: var(--transition);
+}
+.runner-btn:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: rgba(0, 212, 255, 0.05);
+}
+.runner-btn.active {
+  border-color: var(--cyan);
+  background: var(--cyan-dim);
+  color: var(--cyan);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.2);
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   UI/UX REFINEMENT LAYER  (Senior CAD UI pass — 시각 정제, 기능 무변경)
+   ※ 기존 선택자/레이아웃은 유지하고 시각 속성만 정돈한다.
+════════════════════════════════════════════════════════════ */
+:root{
+  --ui-focus: 0 0 0 2px rgba(0,212,255,.55);
+  --ui-shadow-sm: 0 1px 2px rgba(0,0,0,.35);
+  --ui-shadow-md: 0 6px 18px rgba(0,0,0,.45);
+  --ui-line: rgba(255,255,255,.08);
+  --ui-line-strong: rgba(255,255,255,.14);
+  --ui-accent: #00d4ff;
+  --ui-ink-2: #9fb2cf;
+  --ui-ink-3: #6b7e9c;
+}
+
+/* 폰트 렌더링 정돈 + 텍스트 선택색 */
+body{ -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
+::selection{ background:rgba(0,212,255,.28); color:#fff; }
+
+/* 스크롤바: 얇고 차분하게, hover 시 또렷 */
+::-webkit-scrollbar{ width:8px; height:8px; }
+::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.10); border-radius:99px; border:2px solid transparent; background-clip:padding-box; }
+::-webkit-scrollbar-thumb:hover{ background:rgba(0,212,255,.45); background-clip:padding-box; }
+
+/* 포커스 접근성: 키보드 포커스 링 통일 */
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible{
+  outline:none; box-shadow:var(--ui-focus); border-radius:6px;
+}
+
+/* ── 상단 탭(워크스페이스) ── 과한 글로우 제거, 또렷한 활성 상태 */
+.nav-tab{
+  letter-spacing:.2px; border-radius:8px; transition:background .18s ease,color .18s ease;
+}
+.nav-tab.active{
+  background:var(--ui-accent); color:#06121b; box-shadow:0 2px 10px rgba(0,212,255,.28);
+}
+.nav-tab:not(.active):hover{ background:rgba(255,255,255,.06); color:#e8f0fe; }
+
+/* ── 기본 버튼 일관화 ── */
+.btn, .btn-primary, .btn-outline{
+  border-radius:8px; font-weight:600; letter-spacing:.2px;
+  transition:transform .12s ease, background .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.btn-primary{ box-shadow:0 2px 10px rgba(0,212,255,.22); }
+.btn-primary:hover{ transform:translateY(-1px); box-shadow:0 6px 20px rgba(0,212,255,.34); }
+.btn-outline{ border-color:var(--ui-line-strong); color:var(--ui-ink-2); }
+.btn-outline:hover{ border-color:var(--ui-accent); color:var(--ui-accent); background:rgba(0,212,255,.10); }
+.btn:disabled, .btn-primary:disabled{ opacity:.45; cursor:not-allowed; transform:none; box-shadow:none; }
+
+/* ── 뷰포트 툴바: '버튼 과다' 완화 — 평소 차분, 활성만 강조 ── */
+.viewer-toolbar{
+  background:rgba(14,18,28,.78); backdrop-filter:blur(8px);
+  border:1px solid var(--ui-line); border-radius:12px; box-shadow:var(--ui-shadow-md);
+  gap:2px;
+}
+.tool-btn{
+  color:var(--ui-ink-2); background:transparent; border-radius:8px;
+  transition:background .15s ease,color .15s ease; position:relative;
+}
+.tool-btn:hover{ background:rgba(255,255,255,.06); color:#e8f0fe; }
+.tool-btn.active{
+  background:rgba(0,212,255,.14); color:var(--ui-accent); box-shadow:none;
+}
+.tool-btn.active::after{
+  content:""; position:absolute; left:50%; bottom:3px; transform:translateX(-50%);
+  width:16px; height:2px; border-radius:2px; background:var(--ui-accent);
+}
+
+/* ── 소재/축/러너 버튼 통일 ── */
+.mat-btn, .axis-btn, .runner-btn{
+  border-radius:8px; border-color:var(--ui-line-strong); color:var(--ui-ink-2);
+  transition:background .15s ease,border-color .15s ease,color .15s ease;
+}
+.mat-btn:hover, .axis-btn:hover, .runner-btn:hover{ border-color:var(--ui-accent); color:var(--ui-accent); }
+.mat-btn.active, .axis-btn.active, .runner-btn.active{
+  border-color:var(--ui-accent); background:rgba(0,212,255,.12); color:var(--ui-accent);
+}
+
+/* ── 패널 헤더: 균일한 라벨 스타일 ── */
+.panel-header{ border-bottom:1px solid var(--ui-line); }
+.panel-header h2, .panel-header h3{
+  letter-spacing:.3px; font-weight:700;
+}
+.cad-model-tree-panel .panel-header h3, .cad-properties-panel .panel-header h3{
+  text-transform:none; color:#cfe0f5;
+}
+
+/* ── 업로드 존: 차분한 점선 → hover 시 accent ── */
+.upload-zone{ border-radius:12px; transition:border-color .18s ease, background .18s ease; }
+.upload-zone:hover, .upload-zone.drag-over{ background:rgba(0,212,255,.06); }
+
+/* ── 카드/점수 배지 정돈 ── */
+.score-card-simple{ border-radius:10px; box-shadow:var(--ui-shadow-sm); }
+.score-grade{ letter-spacing:.3px; }
+
+/* ── 입력/슬라이더 accent 통일 ── */
+input[type=range]{ accent-color:var(--ui-accent); }
+input[type=checkbox]{ accent-color:var(--ui-accent); }
+
+/* ── 상태 표시등 ── */
+.status-dot{ box-shadow:0 0 0 3px rgba(255,255,255,.04); }
+
+/* ── 트리 노드 hover 가독성 ── */
+.tree-node{ border-radius:6px; transition:background .14s ease; }
+.tree-node:hover{ background:rgba(255,255,255,.05); }
+
+/* ── 우측 AI 대시보드 토글 버튼: 헤더 톤과 일치 ── */
+#dima-dash-toggle{ box-shadow:-2px 0 14px rgba(0,0,0,.5); letter-spacing:.5px; }
+
+/* ── 알림 목록 필터 탭 (Senior CAD UI pass) ── */
+.issue-filter-bar {
+  display: flex;
+  gap: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--creo-border-cad);
+  border-radius: 6px;
+  padding: 3px;
+  width: 100%;
+}
+.filter-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 5px 2px;
+  cursor: pointer;
+  transition: var(--transition);
+  text-align: center;
+  white-space: nowrap;
+}
+.filter-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+.filter-btn.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ui-accent);
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+  font-weight: bold;
+}
+
+/* ════════════════════════════════════════════════════════════
+   PRO REDESIGN v2  — 하이브리드(다크 크롬 + 밝은 작업영역) · 고밀도 · 클린
+   목표: 전문가용 CAD처럼 깔끔하고 단순하게. 구조/기능 불변, 시각만 정돈.
+════════════════════════════════════════════════════════════ */
+:root{
+  --c-accent:#0aa6d6;          /* 차분한 시안 (네온기 완화) */
+  --c-accent-soft:rgba(10,166,214,.12);
+  --c-chrome:#11161f;          /* 헤더/툴바 베이스 */
+  --c-panel:#161c26;           /* 사이드 패널 */
+  --c-panel-2:#1b222e;         /* 패널 헤더/섹션 */
+  --c-line:#252d3a;            /* 얇은 구분선 (1px) */
+  --c-ink:#e7edf5;             /* 본문 */
+  --c-ink-2:#9aa8bd;           /* 보조 */
+  --c-ink-3:#5f6e84;           /* 흐림 */
+  --c-work:#eef1f6;            /* 밝은 작업영역 */
+}
+
+/* ── 헤더: 얇은 1px 라인, 차분한 표면 ── */
+.slim-cad-header, .creo-ribbon-header{
+  background:var(--c-chrome) !important;
+  border-bottom:1px solid var(--c-line) !important;
+  box-shadow:0 1px 0 rgba(0,0,0,.4);
+}
+.logo-main{ letter-spacing:.3px; }
+.logo-sub{ color:var(--c-ink-3); letter-spacing:1px; }
+
+/* ── 상단 탭: 세그먼트 느낌, 단순하게 ── */
+.nav-tab{ font-size:.82rem; padding:7px 14px; border-radius:8px; color:var(--c-ink-2); }
+.nav-tab.active{ background:var(--c-accent); color:#04222e; box-shadow:none; }
+.nav-tab:not(.active):hover{ background:rgba(255,255,255,.05); color:var(--c-ink); }
+
+/* ── 사이드 패널: 1px 라인, 균일 표면 ── */
+.cad-model-tree-panel, .cad-properties-panel{ background:var(--c-panel); }
+.cad-model-tree-panel{ border-right:1px solid var(--c-line); }
+.cad-viewport-panel{ border-right:1px solid var(--c-line); }
+.cad-model-tree-panel .panel-header, .cad-properties-panel .panel-header{
+  background:var(--c-panel-2); border-bottom:1px solid var(--c-line); padding:8px 12px;
+}
+.cad-model-tree-panel .panel-header h3, .cad-properties-panel .panel-header h3{
+  font-size:.68rem; letter-spacing:.8px; color:var(--c-ink-2); text-transform:uppercase;
+}
+
+/* ── 밝은 작업영역(하이브리드) — 2D/빈화면이 깔끔하게, 3D는 캔버스가 덮음 ── */
+.cad-viewport-panel{
+  background:linear-gradient(180deg,#f6f8fb 0%, #e9edf3 100%);
+}
+.viewer-placeholder{ color:#5f6e84; }
+.viewer-placeholder .placeholder-glyph, .placeholder-glyph{ opacity:.5; }
+
+/* ── 뷰포트 툴바: 단순한 알약 그룹, 활성만 강조 ── */
+.viewer-toolbar{
+  background:rgba(17,22,31,.92); backdrop-filter:blur(10px);
+  border:1px solid var(--c-line); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.4); gap:2px; padding:5px;
+}
+.tool-btn{ font-size:.76rem; color:var(--c-ink-2); border-radius:7px; padding:6px 9px; }
+.tool-btn:hover{ background:rgba(255,255,255,.06); color:var(--c-ink); }
+.tool-btn.active{ background:var(--c-accent-soft); color:var(--c-accent); }
+.tool-btn.active::after{ background:var(--c-accent); }
+
+/* ── 버튼 통일 ── */
+.btn, .btn-primary, .btn-outline{ border-radius:8px; font-weight:600; font-size:.82rem; }
+.btn-primary{ background:var(--c-accent); box-shadow:none; }
+.btn-primary:hover{ filter:brightness(1.08); transform:translateY(-1px); box-shadow:0 4px 14px rgba(10,166,214,.3); }
+.btn-outline{ border:1px solid var(--c-line); color:var(--c-ink-2); }
+.btn-outline:hover{ border-color:var(--c-accent); color:var(--c-accent); background:var(--c-accent-soft); }
+
+/* ── 소재/축/러너 버튼 ── */
+.mat-btn,.axis-btn,.runner-btn{ border:1px solid var(--c-line); color:var(--c-ink-2); border-radius:7px; }
+.mat-btn.active,.axis-btn.active,.runner-btn.active{ border-color:var(--c-accent); background:var(--c-accent-soft); color:var(--c-accent); }
+.mat-btn:hover,.axis-btn:hover,.runner-btn:hover{ border-color:var(--c-accent); color:var(--c-accent); }
+
+/* ── 업로드 존: 단순한 점선 ── */
+.upload-zone{ border:1.5px dashed var(--c-line); border-radius:10px; background:rgba(255,255,255,.02); }
+.upload-zone:hover,.upload-zone.drag-over{ border-color:var(--c-accent); background:var(--c-accent-soft); }
+
+/* ── 트리 노드 가독성 ── */
+.tree-node{ font-size:.76rem; color:#c4cedd; border-radius:6px; }
+.tree-node:hover{ background:rgba(255,255,255,.05); }
+
+/* ── 입력/슬라이더/체크 accent ── */
+input[type=range],input[type=checkbox]{ accent-color:var(--c-accent); }
+
+/* ── 스크롤바: 얇고 차분 ── */
+::-webkit-scrollbar{ width:8px; height:8px; }
+::-webkit-scrollbar-thumb{ background:rgba(255,255,255,.10); border-radius:99px; }
+::-webkit-scrollbar-thumb:hover{ background:var(--c-accent); }
+
+/* ── 포커스 접근성 ── */
+button:focus-visible,input:focus-visible,select:focus-visible{ outline:none; box-shadow:0 0 0 2px rgba(10,166,214,.55); border-radius:6px; }
+
+/* ── 우측 AI 대시보드 토글: 톤 일치 ── */
+#dima-dash-toggle{ background:var(--c-accent); box-shadow:-2px 0 14px rgba(0,0,0,.5); }
+
+
+/* ── DUPLICATE PANEL HIDE: 3D 우측 결함예측 요약은 대시보드와 중복 → 숨김 ── */
+#defect-summary-card-3d{ display:none !important; }
+
+
+/* ═══════════ 3D 탭 UI 리파인먼트 (중앙정렬 · 정돈) ═══════════ */
+/* 빈 화면 비네트 (모델 로드 시 캔버스가 덮음) — 중앙으로 시선 유도 */
+#content-3d .cad-viewport-panel{
+  background: radial-gradient(120% 90% at 50% 40%, #f5f8fc 0%, #e7ecf3 68%, #dce3ec 100%);
+}
+/* 플로팅 분석 툴바: 상단 가운데 정렬 알약 그룹, 좁아지면 줄바꿈 */
+#content-3d #toolbar-3d.horizontal-viewer-toolbar{
+  top: 14px; left: 50%; right: auto; transform: translateX(-50%);
+  max-width: calc(100% - 32px); flex-wrap: wrap; justify-content: center; row-gap: 5px;
+  background: rgba(15,19,30,0.82); border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 12px; padding: 7px 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45); backdrop-filter: blur(14px);
+}
+#content-3d #toolbar-3d .tool-btn{
+  height: 30px; border-radius: 8px; color: #aeb9cc;
+  transition: background .15s ease, color .15s ease, transform .12s ease, box-shadow .15s ease;
+}
+#content-3d #toolbar-3d .tool-btn:hover{ transform: translateY(-1px); color: #eaf2ff; background: rgba(255,255,255,0.08); }
+#content-3d #toolbar-3d .tool-btn.active{
+  color: #8df0ff; background: linear-gradient(135deg, rgba(0,212,255,0.24), rgba(0,120,255,0.18));
+  box-shadow: inset 0 0 0 1px rgba(0,212,255,0.45);
+}
+#content-3d #toolbar-3d .tool-sep-v{ height: 18px; background: rgba(255,255,255,0.14); margin: 0 3px; }
+/* 플레이스홀더: 더 깔끔하게, 정중앙 */
+#content-3d .viewer-placeholder{ gap: 18px; }
+#content-3d .viewer-placeholder .placeholder-glyph{ font-size: 4.4rem; opacity: 0.34; }
+#content-3d .viewer-placeholder p{ font-size: 0.86rem; color: #67748c; letter-spacing: 0.2px; line-height: 1.7; }
+/* 좌측 파라미터 패널 미세 정돈 */
+#content-3d .upload-zone{ transition: border-color .2s ease, background .2s ease; }
+#content-3d .panel-header h3{ letter-spacing: 0.4px; }

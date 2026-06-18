@@ -1,0 +1,45 @@
+{
+  "name": "dima-cad",
+  "version": "1.0.0",
+  "description": "DIMA CAD - Design Intelligence for Mold Analysis (오프라인 데스크톱 앱)",
+  "main": "main.js",
+  "author": "DIMA",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win nsis"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.dima.cad",
+    "productName": "DIMA CAD",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "main.js",
+      "css/**/*",
+      "js/**/*",
+      "libs/**/*",
+      "samples/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DIMA CAD"
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/1.0.0",
+  "build": {
+    "beforeBuildCommand": "node scripts/copy-app.js",
+    "beforeDevCommand": "node scripts/copy-app.js",
+    "devPath": "../public",
+    "distDir": "../public",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "Injection Verification Tool",
+    "version": "1.0.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "shell": { "open": true },
+      "dialog": { "all": true },
+      "path": { "all": true },
+      "process": { "exit": true, "relaunch": true }
+    },
+    "windows": [],
+    "security": {
+      "csp": null
+    },
+    "updater": {
+      "active": false,
+      "dialog": true,
+      "endpoints": [
+        "https://your-update-server.example.com/updates/{{target}}/{{current_version}}"
+      ],
+      "pubkey": ""
+    },
+    "bundle": {
+      "active": true,
+      "targets": ["nsis"],
+      "identifier": "com.dima.injection-verification-tool",
+      "publisher": "DIMA",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "resources": ["app-bundle", "bin"],
+      "copyright": "Copyright © 2026 DIMA",
+      "category": "Productivity",
+      "shortDescription": "Injection Verification Tool",
+      "longDescription": "사출 검증 데스크톱 소프트웨어 — DFM 자동 검증, 3D 뷰어, AI 설계 검토 (오프라인 / 무 라이선스)",
+      "windows": {
+        "nsis": {
+          "installMode": "perMachine",
+          "languages": ["Korean", "English"],
+          "displayLanguageSelector": true
+        }
+      }
+    }
+  }
+}
