@@ -19,6 +19,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'python_backend'))
 import flow_solver
 import cooling_solver
 import sinkmark_solver
+import metrics_aggregator
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS to allow cross-origin requests from frontend browser
@@ -33,7 +34,8 @@ def analyze():
 
         print("수신된 사출 조건:", data)
         cooling_enabled = data.get('cooling_enabled', data.get('coolingEnabled', False))
-        
+        validated_metrics = None  # 검증된 솔버 기반 요약 지표(수축/휨). 정밀 모드에서만 채워짐.
+
         if cooling_enabled:
             # 🟢 냉각 탭 ON: 논문 공식이 적용된 정밀 열전달 연계 해석 실행
             print("냉각 연계 모드 활성화: 초정밀 유동 및 싱크마크 연산 시작")
@@ -46,7 +48,18 @@ def analyze():
             
             # 3. Hot Spot(열집중) 정보를 결합하여 싱크마크 정확도 고도화
             sink_marks = sinkmark_solver.calculate_sinkmarks_with_thermal(cooling_grid, data)
-            
+
+            # 4. 검증된 솔버 출력에서 수축%/휨 요약 지표 산출(프런트 JS 추정식을 대체할 권위값)
+            try:
+                validated_metrics = metrics_aggregator.aggregate_defect_metrics(
+                    cooling_grid["voxel_grid"],
+                    cooling_grid["T_final"],
+                    cooling_grid["solidification_time"],
+                )
+            except Exception as _mErr:
+                print("지표 집계 실패(무시하고 진행):", _mErr)
+                validated_metrics = None
+
             vertex_temperatures = cooling_grid["vertex_temperatures"]
             cooling_channels = cooling_grid["channels"]
             cycle_time = float(cooling_grid.get("cycle_time", 0.0))
@@ -71,7 +84,8 @@ def analyze():
             "cooling_channels": cooling_channels,
             "cycle_time": cycle_time,
             "vertex_fill_times": vertex_fill_times,
-            "vertexFillTimes": vertex_fill_times
+            "vertexFillTimes": vertex_fill_times,
+            "validated_metrics": validated_metrics
         })
         
     except Exception as e:

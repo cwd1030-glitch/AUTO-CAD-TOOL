@@ -38,6 +38,8 @@ const STLAnalyzer = (() => {
   let _cycleTime = 0.0;
   let _hotSpots = [];
   let _coolingOverlayActive = false;
+  let _coolingPlanGroup = null;
+  let _lastCoolingPlan = null;
   let _vertexThickness = null;
   let _maxFlowDistance = 0;
   let _isGateSettingMode = false;
@@ -52,6 +54,9 @@ const STLAnalyzer = (() => {
 
   // Undercut detection cache
   let _undercutCache = null;
+
+  // 마지막 형상 분석의 기하 지표 (러너/온도 변경 시 형상 재분석 없이 진단만 재계산용)
+  let _lastGeoMetrics = null;
 
   let _meltTemp = 230;
   let _moldTemp = 50;
@@ -290,8 +295,8 @@ const STLAnalyzer = (() => {
     const W = container.clientWidth, H = container.clientHeight;
 
     _scene = new THREE.Scene();
-    // Glassmorphism theme: Use transparent background to blend with CSS
-    _scene.fog = new THREE.FogExp2(0x080c18, 0.0015);
+    // Moldflow-like analysis view: neutral background, no colored rim glow.
+    _scene.fog = new THREE.FogExp2(0xd5dee8, 0.00055);
 
     _camera = new THREE.PerspectiveCamera(45, W/H, 0.01, 10000);
     _camera.position.set(0, 0, 200);
@@ -300,34 +305,29 @@ const STLAnalyzer = (() => {
     _renderer.setClearColor(0x000000, 0); // Make background transparent
     _renderer.setPixelRatio(window.devicePixelRatio);
     _renderer.setSize(W, H);
-    _renderer.shadowMap.enabled = true;
+    _renderer.shadowMap.enabled = false;
     _renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(_renderer.domElement);
 
-    // Lights - Premium Dark Theme Setup
-    const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+    // Soft, neutral lighting keeps result plots readable and reduces glare.
+    const ambient = new THREE.AmbientLight(0xffffff, 0.72);
     _scene.add(ambient);
     
-    const dir1 = new THREE.DirectionalLight(0xffffff, 1.2);
-    dir1.position.set(100, 200, 300);
-    dir1.castShadow = true;
+    const dir1 = new THREE.DirectionalLight(0xffffff, 0.62);
+    dir1.position.set(120, 180, 220);
+    dir1.castShadow = false;
     dir1.shadow.mapSize.width = 2048;
     dir1.shadow.mapSize.height = 2048;
     dir1.shadow.bias = -0.0001;
     _scene.add(dir1);
     
-    const dir2 = new THREE.DirectionalLight(0x00d4ff, 0.8);
-    dir2.position.set(-200, -100, -100);
+    const dir2 = new THREE.DirectionalLight(0xdde7f0, 0.28);
+    dir2.position.set(-180, -120, -90);
     _scene.add(dir2);
-    
-    // Rim light for depth
-    const rim = new THREE.PointLight(0x00ffa3, 0.5, 5000);
-    rim.position.set(-200, 200, -200);
-    _scene.add(rim);
 
-    // Grid - Cyberpunk/Dark mode grid
-    const grid = new THREE.GridHelper(500, 50, 0x00d4ff, 0x1a233a);
-    grid.material.opacity = 0.4;
+    // Neutral grid similar to engineering simulation workspaces.
+    const grid = new THREE.GridHelper(360, 36, 0x8290a0, 0xc6d0dc);
+    grid.material.opacity = 0.22;
     grid.material.transparent = true;
     _scene.add(grid);
 
@@ -625,11 +625,16 @@ const STLAnalyzer = (() => {
     _geometry.setAttribute('position', new THREE.BufferAttribute(stlData.positions, 3));
     _geometry.setAttribute('normal',   new THREE.BufferAttribute(stlData.normals.slice(), 3));
 
-    // Center model first to establish correct bounding box centers
+    // Normalize large CAD coordinates into local model space before any
+    // analysis/rendering. Some STEP/STL exports are far from origin, which can
+    // make the first camera fit miss the model and can reduce WebGL precision.
     _geometry.computeBoundingBox();
-    const box = _geometry.boundingBox;
     const center = new THREE.Vector3();
-    box.getCenter(center);
+    _geometry.boundingBox.getCenter(center);
+    _geometry.translate(-center.x, -center.y, -center.z);
+    _geometry.computeBoundingBox();
+    _geometry.computeBoundingSphere();
+    const box = _geometry.boundingBox;
 
     _vertexThickness = null;
     computeWallThickness();
@@ -640,12 +645,12 @@ const STLAnalyzer = (() => {
 
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: _showOverlay,
-      roughness: 0.35,
-      metalness: 0.15,
+      roughness: 0.88,
+      metalness: 0.0,
     });
     if (!_showOverlay) {
       mat.vertexColors = false;
-      mat.color = new THREE.Color(0x1a8fd1);
+      mat.color = new THREE.Color(0x5f7f9a);
     }
     mat.side = THREE.DoubleSide; // Ensure both sides render for thin walls
 
@@ -654,9 +659,9 @@ const STLAnalyzer = (() => {
     // 메시 와이어프레임 외곽선 오버레이 추가 (신뢰감 부여 및 CAD 감성 극대화)
     const wireframeGeo = new THREE.WireframeGeometry(_geometry);
     const wireframeMat = new THREE.LineBasicMaterial({
-      color: 0x00d4ff, // Cyan wireframe for dark theme
+      color: 0x54708a,
       transparent: true,
-      opacity: 0.12,
+      opacity: 0.045,
       depthWrite: false
     });
     const wireframe = new THREE.LineSegments(wireframeGeo, wireframeMat);
@@ -666,8 +671,6 @@ const STLAnalyzer = (() => {
     _mesh.targetQuaternion = new THREE.Quaternion();
     setPullAxis(_pullAxis);
     _mesh.quaternion.copy(_mesh.targetQuaternion);
-
-    _mesh.position.sub(center);
 
     // Position grid at bottom of model
     const size = new THREE.Vector3();
@@ -1084,7 +1087,7 @@ const STLAnalyzer = (() => {
     _showOverlay = show;
     if (!_mesh) return;
     _mesh.material.vertexColors = show;
-    if (!show) _mesh.material.color = new THREE.Color(0x1a8fd1);
+    if (!show) _mesh.material.color = new THREE.Color(0x5f7f9a);
     else _mesh.material.color = new THREE.Color(0xffffff);
     _mesh.material.needsUpdate = true;
   }
@@ -1441,8 +1444,8 @@ const STLAnalyzer = (() => {
 
     issues.push({
       level: sinkRes.severity === 'HIGH' ? 'error' : sinkRes.severity === 'MEDIUM' ? 'warning' : 'ok',
-      title: `싱크마크 위험도 (Sink Risk): ${sinkRes.severity}`,
-      desc: `예측 싱크마크 개수: ${sinkRes.count}개, 총 예측 면적: ${sinkRes.area}㎟. ${sinkRes.severity === 'HIGH' ? 'Rib 두께 감소 및 보스 코어아웃(Core Out) 설계 변경을 권장합니다.' : '수축/함몰 우려가 적은 편입니다.'}`
+      title: `수축 위험도 (Shrinkage Risk): ${sinkRes.severity}`,
+      desc: `예측 수축 후보: ${sinkRes.count}개, 총 예측 면적: ${sinkRes.area}㎟. ${sinkRes.severity === 'HIGH' ? 'Rib 두께 감소 및 보스 코어아웃(Core Out) 설계 변경을 권장합니다.' : '수축 우려가 적은 편입니다.'}`
     });
 
     issues.push({
@@ -1798,6 +1801,9 @@ const STLAnalyzer = (() => {
       scoresMap: directionScores
     };
 
+    // 러너/온도/유량/압력 변경 시 형상 재분석 없이 진단만 재계산할 수 있도록 기하 지표 보관
+    _lastGeoMetrics = { minDim, maxDim, totalArea, matKey };
+
     // Defect Predictions
     return {
       issues, score, moldFeatures, diagnostics, recommendation,
@@ -1898,7 +1904,7 @@ const STLAnalyzer = (() => {
       const dir = new THREE.Vector3(0, 1, 0);
       const origin = new THREE.Vector3(0, 0, 0);
       const length = radius * 0.4;
-      const hex = 0x00d4ff;
+      const hex = 0x0a84c6;
       _pullArrow = new THREE.ArrowHelper(dir, origin, length, hex, radius * 0.08, radius * 0.04);
       _scene.add(_pullArrow);
     }
@@ -1933,6 +1939,7 @@ const STLAnalyzer = (() => {
     const positions = _geometry.attributes.position.array;
     const normals   = _geometry.attributes.normal.array;
     let colors;
+    const hasPrimaryOverlay = _shrinkageOverlayActive || _sinkOverlayActive || _warpOverlayActive || (_flowOverlayActive && _flowDistances);
     if (_shrinkageOverlayActive) {
       colors = computeShrinkagePredictColors(positions, normals);
     } else if (_sinkOverlayActive) {
@@ -1941,10 +1948,14 @@ const STLAnalyzer = (() => {
       colors = computeWarpageColors(positions, normals);
     } else if (_flowOverlayActive && _flowDistances) {
       colors = computeFlowColors(positions, _flowDistances, _maxFlowDistance, _flowAnimationTime);
-    } else if (_coolingOverlayActive && _vertexTemperatures) {
+    } else if (_coolingOverlayActive) {
       colors = computeCoolingColors(positions, _vertexTemperatures);
     } else {
       colors = computeDraftColors(positions, normals);
+    }
+
+    if (_coolingOverlayActive && hasPrimaryOverlay) {
+      colors = blendCoolingColors(colors, computeCoolingColors(positions, _vertexTemperatures));
     }
     _geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     _geometry.attributes.color.needsUpdate = true;
@@ -2737,12 +2748,12 @@ const STLAnalyzer = (() => {
     const coneRadius = Math.max(0.6, avgDim * 0.012);
     const coneHeight = coneRadius * 3.0;
 
-    const palette = [0xffaa00, 0x00ccff, 0xff44bb, 0x44ff88, 0xff6600, 0xbbff00];
+    const palette = [0xd9a441, 0x1f78b4, 0x8e6fb5, 0x20a464, 0xc56f3c, 0x7b9d42];
     const color   = palette[index % palette.length];
 
     const geom = new THREE.ConeGeometry(coneRadius, coneHeight, 16);
     geom.translate(0, -coneHeight / 2, 0);
-    const mat = new THREE.MeshPhongMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.4), shininess: 100 });
+    const mat = new THREE.MeshPhongMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.08), shininess: 18 });
     const marker = new THREE.Mesh(geom, mat);
     marker.position.copy(localPoint);
 
@@ -3357,7 +3368,7 @@ const STLAnalyzer = (() => {
       }
     }
 
-    // ── 4. 수축 (Sink Mark) 위험 영역 탐지 ──
+    // ── 4. 수축 위험 영역 탐지 ──
     if (_vertexThickness) {
       let maxThick = 0;
       for (let i = 0; i < _vertexThickness.length; i++) {
@@ -3482,25 +3493,29 @@ const STLAnalyzer = (() => {
   }
 
   function getRainbowColor(t) {
-    let r = 0, g = 0, b = 0;
     const val = Math.max(0.0, Math.min(1.0, t));
-    if (val < 0.2) {
-      const s = val / 0.2;
-      r = 0.0; g = s; b = 1.0;
-    } else if (val < 0.4) {
-      const s = (val - 0.2) / 0.2;
-      r = 0.0; g = 1.0; b = 1.0 - s;
-    } else if (val < 0.6) {
-      const s = (val - 0.4) / 0.2;
-      r = s; g = 1.0; b = 0.0;
-    } else if (val < 0.8) {
-      const s = (val - 0.6) / 0.2;
-      r = 1.0; g = 1.0 - s * 0.5; b = 0.0;
-    } else {
-      const s = (val - 0.8) / 0.2;
-      r = 1.0; g = 0.5 - s * 0.5; b = 0.0;
+    // Moldflow 표준 Jet 스펙트럼: Blue(최저/best) → Cyan → Green → Yellow → Orange → Red(최고/worst)
+    // 선명한 채도로 실제 Moldflow 결과 플롯과 동일한 부드러운 그라데이션을 재현.
+    const stops = [
+      [0.00, 0.00, 0.20, 0.95],  // deep blue
+      [0.22, 0.00, 0.80, 1.00],  // cyan
+      [0.45, 0.05, 0.86, 0.28],  // green
+      [0.65, 0.95, 0.95, 0.00],  // yellow
+      [0.82, 1.00, 0.55, 0.00],  // orange
+      [1.00, 0.92, 0.05, 0.05]   // red
+    ];
+    for (let i = 0; i < stops.length - 1; i++) {
+      const a = stops[i], b = stops[i + 1];
+      if (val <= b[0]) {
+        const s = (val - a[0]) / Math.max(0.0001, b[0] - a[0]);
+        return {
+          r: a[1] + (b[1] - a[1]) * s,
+          g: a[2] + (b[2] - a[2]) * s,
+          b: a[3] + (b[3] - a[3]) * s
+        };
+      }
     }
-    return { r, g, b };
+    return { r: 0.92, g: 0.05, b: 0.05 };
   }
 
   /* Moldflow 표준 색상 스펙트럼: Blue→Cyan→Green→Yellow→Orange→Red
@@ -3528,9 +3543,9 @@ const STLAnalyzer = (() => {
         const distToFront = targetDist - d;
         if (distToFront < frontWidth && animPct > 0.005 && animPct < 0.995) {
           const glow = 1.0 - distToFront / frontWidth;
-          r = r + (1.0 - r) * glow * 0.88;
-          g = g + (1.0 - g) * glow * 0.88;
-          b = b + (1.0 - b) * glow * 0.88;
+          r = r + (1.0 - r) * glow * 0.28;
+          g = g + (1.0 - g) * glow * 0.28;
+          b = b + (1.0 - b) * glow * 0.28;
         }
       }
 
@@ -3868,6 +3883,41 @@ const STLAnalyzer = (() => {
   }
 
   /* 게이트 추가 */
+  async function addAutoGatePosition() {
+    if (!_mesh || !_geometry) return null;
+    if (_gatePositions.length > 0) return recalculateFlow();
+
+    _geometry.computeBoundingBox();
+    const box = _geometry.boundingBox;
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+
+    let localPoint;
+    let localNormal;
+    if (_pullAxis === 'X') {
+      const y = size.y >= size.z ? box.min.y : center.y;
+      const z = size.z > size.y ? box.min.z : center.z;
+      localPoint = new THREE.Vector3(center.x, y, z);
+      localNormal = new THREE.Vector3(0, size.y >= size.z ? -1 : 0, size.z > size.y ? -1 : 0).normalize();
+    } else if (_pullAxis === 'Y') {
+      const x = size.x >= size.z ? box.min.x : center.x;
+      const z = size.z > size.x ? box.min.z : center.z;
+      localPoint = new THREE.Vector3(x, center.y, z);
+      localNormal = new THREE.Vector3(size.x >= size.z ? -1 : 0, 0, size.z > size.x ? -1 : 0).normalize();
+    } else {
+      const x = size.x >= size.y ? box.min.x : center.x;
+      const y = size.y > size.x ? box.min.y : center.y;
+      localPoint = new THREE.Vector3(x, y, center.z);
+      localNormal = new THREE.Vector3(size.x >= size.y ? -1 : 0, size.y > size.x ? -1 : 0, 0).normalize();
+    }
+
+    if (localNormal.lengthSq() < 0.001) localNormal = new THREE.Vector3(0, 0, -1);
+    const worldPoint = _mesh.localToWorld(localPoint.clone());
+    return addGatePosition(worldPoint, localPoint, localNormal);
+  }
+
   async function addGatePosition(worldPoint, localPoint, localNormal) {
     if (!_mesh) return null;
     if (!localPoint) localPoint = _mesh.worldToLocal(worldPoint.clone());
@@ -3928,13 +3978,13 @@ const STLAnalyzer = (() => {
 
   function toggleFlowOverlay(active) {
     _flowOverlayActive = active;
-    if (active) _shrinkageOverlayActive = false;
+    if (active) { _shrinkageOverlayActive = false; }
     recolorGeometry();
   }
 
   function toggleShrinkageOverlay(active) {
     _shrinkageOverlayActive = active;
-    if (active) _flowOverlayActive = false;
+    if (active) { _flowOverlayActive = false; }
     recolorGeometry();
   }
 
@@ -4003,6 +4053,23 @@ const STLAnalyzer = (() => {
     }
   }
 
+  // 형상(언더컷/Auto-Pull) 재분석 없이 러너·온도·유량·압력 변경만 반영해
+  // 사출 진단(압력/냉각/게이트)과 휨 예측을 즉시 재계산한다. 광선추적을 수행하지 않아 가볍다.
+  function recomputeThermal() {
+    if (!_lastGeoMetrics) return null;
+    const { minDim, maxDim, totalArea, matKey } = _lastGeoMetrics;
+    const mat = MATERIAL_DB[matKey] || MATERIAL_DB.ABS;
+    const diagnostics = _getDiagnostics(minDim, maxDim, totalArea, matKey, mat);
+    let warpage = null;
+    if (_adjacencyGraph) {
+      try {
+        const shrink = predictShrinkage(_adjacencyGraph);
+        warpage = predictWarpage(_adjacencyGraph, shrink);
+      } catch (e) { warpage = null; }
+    }
+    return { diagnostics, warpage };
+  }
+
   function setGateParams(index, velocityRatio, pressureRatio) {
     if (index >= 0 && index < _gatePositions.length) {
       if (velocityRatio !== undefined) _gateVelocityRatios[index] = velocityRatio;
@@ -4019,7 +4086,7 @@ const STLAnalyzer = (() => {
     if (!_geometry || !_vertexThickness || !graph) return { count: 0, area: 0, severity: 'LOW', details: [], recommendations: [] };
     const details = [];
     const recos = new Set();
-    let highCount = 0, medCount = 0, lowCount = 0;
+    let highCount = 0, medCount = 0;
     
     let totalThick = 0;
     const keys = Object.keys(graph);
@@ -4047,33 +4114,36 @@ const STLAnalyzer = (() => {
         }
       });
       
-      if (count === 0) return;
+      if (count < 3) return;
       const neighAvg = neighSum / count;
       
       const massRatio = tLocal / neighAvg;
-      const isMassHigh = massRatio >= 1.5;
+      const isMassHigh = massRatio >= 1.65 && tLocal > avgThick * 1.15;
       
       const mat = MATERIAL_DB[_material] || MATERIAL_DB.ABS;
       const targetRibRatio = mat.ribRatio || 0.6;
       const ribRatio = neighMax > 0 ? (tLocal / neighMax) : 1.0;
       let ribRisk = 'LOW';
-      if (ribRatio > targetRibRatio) ribRisk = 'HIGH';
-      else if (ribRatio >= targetRibRatio * 0.8) ribRisk = 'MEDIUM';
+      if (ribRatio > targetRibRatio * 1.18 && tLocal > avgThick * 1.08) ribRisk = 'HIGH';
+      else if (ribRatio > targetRibRatio && tLocal > avgThick * 1.02) ribRisk = 'MEDIUM';
       
-      const isBossHigh = tLocal > neighAvg * 1.2;
+      const isBossHigh = tLocal > Math.max(neighAvg * 1.35, avgThick * 1.12);
       
       let risk = 'LOW';
       if (isMassHigh || isBossHigh || ribRisk === 'HIGH') {
         risk = 'HIGH';
         highCount++;
+        if (isBossHigh) recos.add('Add boss core-out or reduce local boss mass');
+        if (ribRisk === 'HIGH') recos.add('Reduce rib thickness toward material guideline');
+        if (isMassHigh) recos.add('Equalize wall thickness near thick mass');
+        /*
         if (isBossHigh) recos.add("Boss Core Out 적용");
         if (ribRisk === 'HIGH') recos.add("Rib Thickness 감소");
         if (isMassHigh) recos.add("Wall Thickness 균일화");
+        */
       } else if (ribRisk === 'MEDIUM') {
         risk = 'MEDIUM';
         medCount++;
-      } else {
-        lowCount++;
       }
       
       if (risk !== 'LOW') {
@@ -4096,14 +4166,21 @@ const STLAnalyzer = (() => {
     const countTotal = distinct.length;
     const area = countTotal * 12.5;
     let severity = 'LOW';
-    if (distinct.some(d => d.risk === 'HIGH') || countTotal > 15) {
+    const highDistinct = distinct.filter(d => d.risk === 'HIGH').length;
+    const confidence = Math.round(50 + Math.min(1, keys.length / 2500) * 30 + (_gatePositions.length ? 8 : 0));
+    if (highDistinct >= 3 || countTotal > 20) {
       severity = 'HIGH';
+      recos.add('Review gate location and packing balance');
+      recos.add('Improve local cooling around thick sections');
+      /*
       recos.add("Gate 위치 조정");
       recos.add("Cooling 개선");
     }
-    else if (countTotal > 5) severity = 'MEDIUM';
+      */
+    }
+    else if (highDistinct >= 1 || countTotal > 6 || medCount > highCount * 4) severity = 'MEDIUM';
     
-    return { count: countTotal, area: Math.round(area), severity, details: distinct, recommendations: Array.from(recos) };
+    return { count: countTotal, area: Math.round(area), severity, confidence, sampleCount: keys.length, details: distinct, recommendations: Array.from(recos) };
   }
 
   function predictShrinkage(graph) {
@@ -4111,7 +4188,7 @@ const STLAnalyzer = (() => {
     const baseShrink = mat.linearShrinkage || 0.005;
     
     if (!_geometry || !_vertexThickness || !graph) {
-      return { maxShrinkage: baseShrink * 100, avgShrinkage: baseShrink * 100, globalShrinkage: baseShrink * 100, riskLevel: 'LOW', details: [], recommendations: [] };
+      return { maxShrinkage: baseShrink * 100, avgShrinkage: baseShrink * 100, globalShrinkage: baseShrink * 100, p90Shrinkage: baseShrink * 100, confidence: 35, sampleCount: 0, riskLevel: 'LOW', details: [], recommendations: [] };
     }
     
     let totalThick = 0;
@@ -4120,10 +4197,22 @@ const STLAnalyzer = (() => {
       totalThick += _vertexThickness[graph[k].vertIdx];
     });
     const avgThick = keys.length > 0 ? totalThick / keys.length : 1;
+    const thicknessSamples = keys
+      .map(k => _vertexThickness[graph[k].vertIdx])
+      .filter(t => Number.isFinite(t) && t > 0.2)
+      .sort((a, b) => a - b);
+    const percentile = (arr, p) => arr[Math.min(arr.length - 1, Math.max(0, Math.floor((arr.length - 1) * p)))];
+    const nominalThick = thicknessSamples.length ? percentile(thicknessSamples, 0.5) : avgThick;
+    const nominalCooling = Math.max(8, calculateCoolingTime(nominalThick, _material));
+    const hasGate = _gatePositions && _gatePositions.length > 0 && _maxFlowDistance > 0;
+    const confidence = Math.round(45 + Math.min(1, thicknessSamples.length / 5000) * 25 + (hasGate ? 14 : 0) + (_vertexTemperatures ? 8 : 0));
     
     let sumShrink = 0;
     let maxShrink = 0;
     let count = 0;
+    let highCount = 0;
+    let medCount = 0;
+    const values = [];
     const details = [];
     const recos = new Set();
     
@@ -4131,49 +4220,77 @@ const STLAnalyzer = (() => {
       const node = graph[key];
       const idx = node.vertIdx;
       const tLocal = _vertexThickness[idx];
-      const dGate = (_flowDistances && _flowDistances[idx] !== Infinity) ? _flowDistances[idx] : (_maxFlowDistance * 0.5);
-      const gateFactor = _maxFlowDistance > 0 ? (1.0 + 0.3 * (dGate / _maxFlowDistance)) : 1.0;
-      const thickFactor = 1.0 + 0.5 * ((tLocal - avgThick) / avgThick);
+      if (!Number.isFinite(tLocal) || tLocal <= 0.2) return;
+      const dGate = (_flowDistances && Number.isFinite(_flowDistances[idx])) ? _flowDistances[idx] : null;
+      const gateProgress = hasGate && dGate != null ? Math.max(0, Math.min(1, dGate / _maxFlowDistance)) : 0.5;
+      const gateFactor = hasGate ? (1.0 + 0.18 * gateProgress) : 1.06;
+      const thicknessDeviation = (tLocal - nominalThick) / Math.max(0.001, nominalThick);
+      const thickFactor = 1.0 + Math.max(-0.22, Math.min(0.75, thicknessDeviation)) * 0.34;
       
       const tc = calculateCoolingTime(tLocal, _material);
-      const coolingFactor = Math.max(0.8, Math.min(1.5, tc / 15.0));
+      const coolingFactor = Math.max(0.90, Math.min(1.25, tc / nominalCooling));
       
       let sLocal = baseShrink * gateFactor * thickFactor * coolingFactor;
-      sLocal = Math.max(baseShrink * 0.5, Math.min(baseShrink * 3.0, sLocal));
+      sLocal = Math.max(baseShrink * 0.75, Math.min(baseShrink * 2.10, sLocal));
       
+      values.push(sLocal);
       sumShrink += sLocal;
       if (sLocal > maxShrink) maxShrink = sLocal;
       count++;
       
       let riskLevel = 'LOW';
-      if (sLocal >= baseShrink * 1.6) riskLevel = 'HIGH';
-      else if (sLocal >= baseShrink * 1.2) riskLevel = 'MEDIUM';
+      if (sLocal >= baseShrink * 1.85) {
+        riskLevel = 'HIGH';
+        highCount++;
+      } else if (sLocal >= baseShrink * 1.35) {
+        riskLevel = 'MEDIUM';
+        medCount++;
+      }
       
       details.push({
         pos: new THREE.Vector3(node.x, node.y, node.z),
         shrinkage: sLocal,
-        riskLevel
+        riskLevel,
+        confidence
       });
     });
     
     const avgShrink = count > 0 ? (sumShrink / count) : baseShrink;
+    values.sort((a, b) => a - b);
+    const p90Shrink = values.length ? percentile(values, 0.90) : baseShrink;
+    const p95Shrink = values.length ? percentile(values, 0.95) : baseShrink;
+    const highRatio = count ? highCount / count : 0;
+    const medRatio = count ? medCount / count : 0;
     let riskLevel = 'LOW';
-    if (maxShrink >= baseShrink * 1.6) {
+    if ((p95Shrink >= baseShrink * 1.75 && highCount >= Math.max(3, count * 0.01)) || highRatio >= 0.04) {
       riskLevel = 'HIGH';
+      recos.add('Increase or verify packing pressure and hold time');
+      recos.add('Check gate size and packing balance');
+      recos.add('Review thick-to-thin transitions before tooling');
+      /*
       recos.add("Holding Pressure 증가");
       recos.add("Holding Time 증가");
       recos.add("Gate 확대");
       recos.add("두께 편차 감소");
     }
-    else if (maxShrink >= baseShrink * 1.2) {
-      riskLevel = 'MEDIUM';
-      recos.add("Cooling 균일화");
+      */
     }
+    else if (p90Shrink >= baseShrink * 1.30 || medRatio >= 0.08) {
+      riskLevel = 'MEDIUM';
+      recos.add('Review cooling uniformity and wall thickness distribution');
+      /*
+      recos.add("Cooling 균일화");
+      */
+    }
+    if (!hasGate) recos.add('Add or auto-place a gate to improve shrinkage confidence');
     
     return {
       maxShrinkage: maxShrink * 100,
       avgShrinkage: avgShrink * 100,
       globalShrinkage: avgShrink * 100,
+      p90Shrinkage: p90Shrink * 100,
+      confidence,
+      sampleCount: count,
       riskLevel,
       details,
       recommendations: Array.from(recos)
@@ -4415,7 +4532,7 @@ const STLAnalyzer = (() => {
     for (let i = 0; i < positions.length; i += 3) {
       const vertIdx = i / 3;
       const val = nodeShrink[vertIdx] || baseShrink;
-      const t = Math.max(0.0, Math.min(1.0, val / (baseShrink * 2.0)));
+      const t = Math.max(0.0, Math.min(1.0, (val - baseShrink * 0.85) / (baseShrink * 1.15)));
       const color = getRainbowColor(t);
       colors[i] = color.r; 
       colors[i+1] = color.g; 
@@ -4449,9 +4566,11 @@ const STLAnalyzer = (() => {
       const nodePos = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
       const distFromCenter = nodePos.sub(center).dot(warpAxis);
       const t = Math.max(0.0, Math.min(1.0, Math.abs(distFromCenter) / (maxDim * 0.5)));
-      colors[i] = 0.1 * (1.0 - t); 
-      colors[i+1] = 0.5 * (1.0 - t) + 0.3 * t; 
-      colors[i+2] = 0.4 + 0.6 * t;
+      // 다른 오버레이와 동일한 Moldflow Jet 색상으로 통일(파랑=변형 작음 → 빨강=변형 큼)
+      const c = getRainbowColor(t);
+      colors[i] = c.r;
+      colors[i+1] = c.g;
+      colors[i+2] = c.b;
     }
     return colors;
   }
@@ -4465,7 +4584,7 @@ const STLAnalyzer = (() => {
     }
     recolorGeometry();
   }
-  
+
   function toggleWarpOverlay(active) {
     _warpOverlayActive = active;
     if (active) {
@@ -4497,22 +4616,190 @@ const STLAnalyzer = (() => {
     _maxFlowDistance = dist;
   }
 
+  function removeCoolingPlan() {
+    if (_coolingPlanGroup && _scene) {
+      _scene.remove(_coolingPlanGroup);
+      _coolingPlanGroup.traverse(obj => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose && m.dispose());
+          else obj.material.dispose && obj.material.dispose();
+        }
+      });
+    }
+    _coolingPlanGroup = null;
+  }
+
+  function makeCylinderBetween(start, end, radius, color) {
+    const dir = new THREE.Vector3().subVectors(end, start);
+    const len = dir.length();
+    const geom = new THREE.CylinderGeometry(radius, radius, len, 16);
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.76, depthTest: true });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.copy(start).add(end).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+    return mesh;
+  }
+
+  function getCoolingField() {
+    if (!_geometry) return null;
+    const positions = _geometry.attributes.position.array;
+    const normals = _geometry.attributes.normal ? _geometry.attributes.normal.array : null;
+    const n = positions.length / 3;
+    const field = new Float32Array(n);
+    let minT = Infinity, maxT = -Infinity, sumT = 0;
+    const bbox = _geometry.boundingBox || new THREE.Box3().setFromBufferAttribute(_geometry.attributes.position);
+    const center = bbox.getCenter(new THREE.Vector3());
+    const size = bbox.getSize(new THREE.Vector3());
+    const maxRadius = Math.max(1, size.length() * 0.5);
+    for (let i = 0; i < n; i++) {
+      let tc;
+      if (_vertexThickness && _vertexThickness[i] > 0.05) {
+        tc = calculateCoolingTime(_vertexThickness[i], _material);
+      } else {
+        const p = new THREE.Vector3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+        const coreFactor = Math.max(0, Math.min(1, 1 - p.distanceTo(center) / maxRadius));
+        tc = 8 + coreFactor * 18;
+      }
+      field[i] = tc;
+      if (tc < minT) minT = tc;
+      if (tc > maxT) maxT = tc;
+      sumT += tc;
+    }
+    return { positions, normals, field, minT, maxT, avgT: n ? sumT / n : 0, count: n };
+  }
+
+  function computeCoolingPlan(maxChannels = 5) {
+    const data = getCoolingField();
+    if (!data || !data.count) return null;
+    const { positions, normals, field, minT, maxT, avgT, count } = data;
+    const span = maxT - minT || 1;
+    const bbox = _geometry.boundingBox || new THREE.Box3().setFromBufferAttribute(_geometry.attributes.position);
+    const modelSize = bbox.getSize(new THREE.Vector3());
+    const minSpacing = Math.max(modelSize.x, modelSize.y, modelSize.z) * 0.13;
+    const channelDepth = Math.max(4, Math.min(18, Math.max(modelSize.x, modelSize.y, modelSize.z) * 0.045));
+    const candidates = [];
+
+    for (let i = 0; i < count; i++) {
+      const score = (field[i] - minT) / span;
+      const p = new THREE.Vector3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+      const normal = normals
+        ? new THREE.Vector3(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]).normalize()
+        : p.clone().normalize();
+      candidates.push({ index: i, score, coolingTime: field[i], point: p, normal });
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    const selected = [];
+    for (const c of candidates) {
+      if (selected.length >= maxChannels) break;
+      if (c.score < 0.55 && selected.length > 0) continue;
+      const tooClose = selected.some(s => s.point.distanceTo(c.point) < minSpacing);
+      if (!tooClose) selected.push(c);
+    }
+    if (!selected.length && candidates.length) {
+      selected.push(candidates[0]);
+    }
+
+    const channels = selected.map((c, idx) => {
+      const surface = _mesh ? _mesh.localToWorld(c.point.clone()) : c.point.clone();
+      const inward = c.normal.clone().multiplyScalar(-channelDepth);
+      const channel = _mesh ? _mesh.localToWorld(c.point.clone().add(inward)) : c.point.clone().add(inward);
+      return {
+        id: idx + 1,
+        score: Math.round(c.score * 100),
+        coolingTime: c.coolingTime,
+        surface,
+        channel,
+        depth: channelDepth
+      };
+    });
+
+    const bins = [0, 0, 0, 0, 0];
+    for (let i = 0; i < field.length; i++) {
+      const t = Math.max(0, Math.min(0.999, (field[i] - minT) / span));
+      bins[Math.floor(t * bins.length)]++;
+    }
+
+    return {
+      channels,
+      minCoolingTime: minT,
+      maxCoolingTime: maxT,
+      avgCoolingTime: avgT,
+      bins,
+      labels: ['Cold', 'Cool', 'Balanced', 'Warm', 'Hot'],
+      colors: ['#0033ff', '#00a3ff', '#00d46a', '#f2e600', '#ff3300'],
+      moldflowGuide: 'Blue=short cooling time, Green=balanced, Red=hot spot / long cooling time'
+    };
+  }
+
+  function drawCoolingPlan(plan) {
+    removeCoolingPlan();
+    if (!plan || !plan.channels || !_scene) return;
+    _coolingPlanGroup = new THREE.Group();
+    _coolingPlanGroup.name = 'optimal-cooling-plan';
+    plan.channels.forEach(ch => {
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(Math.max(0.9, ch.depth * 0.16), 18, 18),
+        new THREE.MeshBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.92 })
+      );
+      sphere.position.copy(ch.channel);
+      _coolingPlanGroup.add(sphere);
+      _coolingPlanGroup.add(makeCylinderBetween(ch.surface, ch.channel, Math.max(0.35, ch.depth * 0.045), 0x00d4ff));
+      const label = createTextSprite(`냉각 #${ch.id}`, '#00d4ff', Math.max(4, ch.depth * 0.42));
+      label.position.copy(ch.channel).add(new THREE.Vector3(0, ch.depth * 0.45, 0));
+      _coolingPlanGroup.add(label);
+    });
+    _scene.add(_coolingPlanGroup);
+  }
+
+  function applyOptimalCoolingPlan() {
+    const plan = computeCoolingPlan();
+    _lastCoolingPlan = plan;
+    drawCoolingPlan(plan);
+    return plan;
+  }
+
+  function blendCoolingColors(baseColors, coolingColors) {
+    const mixed = new Float32Array(baseColors.length);
+    const coolingWeight = 0.34;
+    const baseWeight = 1 - coolingWeight;
+    for (let i = 0; i < baseColors.length; i += 3) {
+      mixed[i] = Math.min(1, baseColors[i] * baseWeight + coolingColors[i] * coolingWeight);
+      mixed[i + 1] = Math.min(1, baseColors[i + 1] * baseWeight + coolingColors[i + 1] * coolingWeight);
+      mixed[i + 2] = Math.min(1, baseColors[i + 2] * baseWeight + coolingColors[i + 2] * coolingWeight);
+    }
+    return mixed;
+  }
+
   function computeCoolingColors(positions, temperatures) {
     const colors = new Float32Array(positions.length);
-    if (!temperatures || temperatures.length === 0) return colors;
-    
+    const n = positions.length / 3;
+
+    // 백엔드 온도장이 있으면 그대로, 없으면 두께 기반 냉각시간 추정으로 대체한다.
+    // (벽이 두꺼울수록 냉각이 늦어 더 뜨겁게 = 빨강) → 백엔드 없이도 냉각 탭이 동작.
+    let field = temperatures;
+    if (!field || field.length === 0) {
+      if (!_vertexThickness) return colors;
+      field = new Float32Array(n);
+      for (let k = 0; k < n; k++) {
+        const th = _vertexThickness[k] || 0;
+        field[k] = th > 0.05 ? calculateCoolingTime(th, _material) : 0;
+      }
+    }
+
     let minT = Infinity, maxT = -Infinity;
-    for (let i = 0; i < temperatures.length; i++) {
-      if (temperatures[i] < minT) minT = temperatures[i];
-      if (temperatures[i] > maxT) maxT = temperatures[i];
+    for (let i = 0; i < field.length; i++) {
+      if (field[i] < minT) minT = field[i];
+      if (field[i] > maxT) maxT = field[i];
     }
     const range = maxT - minT || 1.0;
-    
+
     for (let i = 0; i < positions.length; i += 3) {
       const idx = i / 3;
-      const tVal = temperatures[idx] !== undefined ? temperatures[idx] : minT;
+      const tVal = field[idx] !== undefined ? field[idx] : minT;
       const t = Math.max(0.0, Math.min(1.0, (tVal - minT) / range));
-      
+
       const color = getRainbowColor(t);
       colors[i] = color.r;
       colors[i+1] = color.g;
@@ -4521,7 +4808,7 @@ const STLAnalyzer = (() => {
     return colors;
   }
 
-  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights, getCanvas, onGateRepositioned, onRightClickModel, setPhysicalParams, calculateCoolingTime, setRunnerType, setGateParams, toggleSinkOverlay, toggleWarpOverlay, toggleCoolingOverlay, setVertexTemperatures, setFlowDistances, setVertexSinkRisk, setMaxFlowDistance, predictSinkMarks, predictShrinkage, predictWarpage, updateWeldLines };
+  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, addAutoGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights, getCanvas, onGateRepositioned, onRightClickModel, setPhysicalParams, calculateCoolingTime, setRunnerType, recomputeThermal, setGateParams, toggleSinkOverlay, toggleWarpOverlay, toggleCoolingOverlay, applyOptimalCoolingPlan, setVertexTemperatures, setFlowDistances, setVertexSinkRisk, setMaxFlowDistance, predictSinkMarks, predictShrinkage, predictWarpage, updateWeldLines };
 
 
 

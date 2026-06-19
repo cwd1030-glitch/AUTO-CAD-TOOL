@@ -1385,3 +1385,932 @@ button:focus-visible,input:focus-visible,select:focus-visible{ outline:none; box
 /* 좌측 파라미터 패널 미세 정돈 */
 #content-3d .upload-zone{ transition: border-color .2s ease, background .2s ease; }
 #content-3d .panel-header h3{ letter-spacing: 0.4px; }
+
+/* Clean 3D inspection workspace: dashboard owns the detailed results. */
+#content-3d .cad-properties-panel,
+#content-3d .resizer-right {
+  display: none !important;
+}
+
+#content-3d .workspace-layout {
+  background: #edf1f5;
+}
+
+#content-3d .cad-model-tree-panel {
+  background: #202833;
+  border-right: 1px solid #c8d0db;
+  box-shadow: none;
+}
+
+#content-3d .cad-model-tree-panel .panel-header {
+  background: #263140;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+#content-3d .cad-model-tree-panel .panel-header h3 {
+  color: #dce6f3;
+}
+
+#content-3d .sidebar-padding {
+  background: transparent;
+}
+
+#content-3d .cad-viewport-panel {
+  border-right: 0;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.88), rgba(239,244,249,0.94)),
+    radial-gradient(100% 85% at 50% 42%, #f9fbfd 0%, #e8eef5 72%, #dde5ee 100%);
+}
+
+#content-3d #toolbar-3d.horizontal-viewer-toolbar {
+  top: 16px;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid rgba(15,23,42,0.12);
+  box-shadow: 0 10px 26px rgba(15,23,42,0.16);
+}
+
+#content-3d #toolbar-3d .tool-btn {
+  color: #475569;
+  min-width: 54px;
+  height: 28px;
+  padding: 0 9px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+#content-3d #toolbar-3d .tool-btn:hover {
+  color: #0f172a;
+  background: rgba(15,23,42,0.06);
+}
+
+#content-3d #toolbar-3d .tool-btn.active {
+  color: #0369a1;
+  background: rgba(14,165,233,0.12);
+  box-shadow: inset 0 0 0 1px rgba(14,165,233,0.36);
+}
+
+#content-3d #toolbar-3d .tool-sep-v {
+  background: rgba(15,23,42,0.14);
+}
+
+#content-3d .upload-zone {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(148,163,184,0.28);
+}
+
+#content-3d .upload-zone:hover,
+#content-3d .upload-zone.drag-over {
+  background: rgba(14,165,233,0.10);
+  border-color: rgba(14,165,233,0.65);
+}
+
+#content-3d .tree-node {
+  color: #d3dce8;
+}
+
+#content-3d .mat-btn,
+#content-3d .axis-btn,
+#content-3d .runner-btn,
+#content-3d .btn-outline {
+  border-color: rgba(148,163,184,0.25);
+  background: rgba(255,255,255,0.04);
+}
+
+#content-3d .mat-btn.active,
+#content-3d .axis-btn.active,
+#content-3d .runner-btn.active {
+  background: rgba(14,165,233,0.16);
+  border-color: rgba(14,165,233,0.72);
+  color: #7dd3fc;
+}
+
+body:has(#content-3d.active) #dima-dash-toggle {
+  display: none !important;
+}
+
+/* Product simplification: DIMA is now focused on 3D injection validation. */
+#tab-2d,
+#content-2d {
+  display: none !important;
+}
+
+body:has(#content-2d.active) #content-3d {
+  display: flex !important;
+}
+
+/* Moldflow-inspired color pass: neutral workspace, restrained analysis colors. */
+:root {
+  --mf-autodesk-blue: #0a84c6;
+  --mf-plot-blue: #1f78b4;
+  --mf-plot-green: #20a464;
+  --mf-plot-yellow: #d9a441;
+  --mf-plot-red: #d55454;
+  --mf-ui-dark: #24313f;
+  --mf-ui-darker: #1d2733;
+  --mf-ui-line: #cbd5df;
+}
+
+#app-header {
+  background: #1f2732 !important;
+  border-bottom-color: #344252 !important;
+}
+
+.logo-hex {
+  filter: none;
+}
+
+.logo-hex polygon {
+  stroke: var(--mf-autodesk-blue);
+  fill: rgba(10,132,198,0.10);
+}
+
+.logo-hex text,
+.logo-main {
+  fill: var(--mf-autodesk-blue);
+  color: #66bde9;
+}
+
+.header-nav {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.12);
+  border-radius: 9px;
+}
+
+.nav-tab {
+  border-radius: 7px;
+  color: #c6d1df;
+}
+
+.nav-tab.active {
+  background: var(--mf-autodesk-blue) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+#content-3d .workspace-layout {
+  height: 100%;
+  bottom: 0;
+  background: #edf1f5;
+}
+
+#content-3d .cad-model-tree-panel {
+  background: var(--mf-ui-dark);
+  border-right: 1px solid var(--mf-ui-line);
+}
+
+#content-3d .cad-model-tree-panel .panel-header {
+  background: var(--mf-ui-darker);
+}
+
+#content-3d .cad-viewport-panel {
+  background:
+    linear-gradient(180deg, #dbe3ec 0%, #cfd9e4 58%, #c3ceda 100%) !important;
+}
+
+#content-3d #toolbar-3d.horizontal-viewer-toolbar {
+  background: rgba(249,251,253,0.94);
+  border-color: rgba(38,50,66,0.16);
+  box-shadow: 0 8px 20px rgba(38,50,66,0.14);
+}
+
+#content-3d #toolbar-3d .tool-btn.active {
+  color: #075985;
+  background: rgba(10,132,198,0.12);
+  box-shadow: inset 0 0 0 1px rgba(10,132,198,0.28);
+}
+
+#content-3d #btn-set-gate {
+  color: #64748b;
+  background: rgba(100,116,139,0.06);
+}
+
+#content-3d #btn-flow-overlay {
+  min-width: 70px;
+}
+
+#content-3d .btn-primary {
+  background: var(--mf-autodesk-blue);
+  color: #fff;
+  box-shadow: none;
+}
+
+#content-3d .mat-btn.active,
+#content-3d .axis-btn.active,
+#content-3d .runner-btn.active,
+#content-3d #btn-axis-auto {
+  background: rgba(10,132,198,0.14) !important;
+  border-color: rgba(10,132,198,0.62) !important;
+  color: #9bd4f2 !important;
+  box-shadow: none !important;
+}
+
+#content-3d input[type=range] {
+  accent-color: var(--mf-autodesk-blue);
+}
+
+#content-3d .status-dot.ready {
+  box-shadow: none;
+}
+
+/* Category-based left menu: compact Moldflow-style setup flow. */
+#content-3d .cad-model-tree-panel {
+  width: 268px;
+  min-width: 268px;
+  background: #273341;
+}
+
+#content-3d .cad-model-tree-panel > .panel-header {
+  min-height: 36px;
+  padding: 8px 12px;
+  background: #202a36;
+}
+
+#content-3d .cad-model-tree-panel > .panel-header h3 {
+  color: #e2e8f0;
+  font-size: 0.72rem;
+  text-transform: none;
+}
+
+#content-3d .cad-model-tree-panel > .panel-header:nth-of-type(1) h3::before {
+  content: "01  ";
+  color: #86b7d7;
+}
+
+#content-3d #sidebar-configs-3d > .panel-header:nth-of-type(1) h3::before {
+  content: "02  ";
+  color: #86b7d7;
+}
+
+#content-3d #sidebar-configs-3d > .panel-header:nth-of-type(2) h3::before {
+  content: "03  ";
+  color: #86b7d7;
+}
+
+#content-3d #sidebar-configs-3d > .panel-header:nth-of-type(3) h3::before {
+  content: "04  ";
+  color: #86b7d7;
+}
+
+#content-3d .cad-model-tree-panel > .panel-header:last-of-type h3::before {
+  content: "05  ";
+  color: #86b7d7;
+}
+
+#content-3d .sidebar-padding,
+#content-3d .model-tree-content {
+  padding: 10px;
+}
+
+#content-3d .upload-zone {
+  min-height: 82px;
+  padding: 16px 12px;
+}
+
+#content-3d .upload-icon {
+  display: none;
+}
+
+#content-3d .upload-text {
+  font-size: 0.76rem;
+}
+
+#content-3d .file-info-bar {
+  min-height: 34px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.05);
+}
+
+#content-3d .material-grid.materials {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+#content-3d .mat-btn,
+#content-3d .axis-btn,
+#content-3d .runner-btn {
+  height: 34px;
+  padding: 4px 2px;
+}
+
+#content-3d .mat-btn small {
+  display: none;
+}
+
+#content-3d .process-parameter {
+  gap: 10px !important;
+}
+
+#content-3d .process-parameter > div {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+#content-3d .process-parameter > div:last-child {
+  border-bottom: 0;
+}
+
+#content-3d .process-parameter span {
+  color: #dbeafe !important;
+}
+
+#content-3d .process-parameter input[type=range] {
+  height: 4px;
+}
+
+#content-3d #btn-analyze-3d {
+  height: 44px;
+  margin-top: 4px !important;
+  border-radius: 7px;
+  font-size: 0.82rem;
+}
+
+#content-3d .cad-model-tree-panel > .panel-header:last-of-type,
+#content-3d .cad-model-tree-panel > .model-tree-content {
+  display: none;
+}
+
+#content-3d .toggle-container {
+  color: #cbd5e1 !important;
+}
+
+#content-3d #toolbar-3d.horizontal-viewer-toolbar {
+  background: rgba(235,241,247,0.94);
+}
+
+/* Final consistency pass: one industrial Moldflow-like surface system. */
+body {
+  background: #1f2732;
+  background-image: none;
+}
+
+#content-dashboard,
+#content-report {
+  background: #cfd9e4 !important;
+  color: #1f2937;
+}
+
+.mf-shell,
+.report-wrap,
+.dashboard-wrap {
+  background: #cfd9e4 !important;
+}
+
+.mf-card,
+.mf-kpi,
+.report-card,
+.dashboard-card,
+.dbx-card,
+.dbx-kpi {
+  background: #f3f6f9 !important;
+  border-color: #b9c5d2 !important;
+  color: #1f2937 !important;
+  box-shadow: none !important;
+}
+
+.mf-card-head,
+.report-card h3,
+.dashboard-card h3 {
+  border-color: #c8d2dc !important;
+}
+
+.mf-status-pill,
+.status-pill,
+.badge {
+  background: #e3ebf3 !important;
+  border-color: #b9c5d2 !important;
+  color: #355067 !important;
+}
+
+.loading-box,
+.toast {
+  background: #273341 !important;
+  border-color: #465568 !important;
+  color: #e7edf5 !important;
+  box-shadow: none !important;
+}
+
+#content-3d .cad-model-tree-panel,
+#content-3d .cad-model-tree-panel > .panel-header,
+#content-3d .file-info-bar,
+#content-3d .mat-btn,
+#content-3d .axis-btn,
+#content-3d .runner-btn,
+#content-3d .btn-outline {
+  box-shadow: none !important;
+}
+
+#content-3d .cad-viewport-panel canvas {
+  filter: saturate(0.9) contrast(0.96);
+}
+
+/* Language/theme controls */
+.dima-user-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 3px;
+  border: 1px solid rgba(148,163,184,0.24);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.045);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  white-space: nowrap;
+}
+
+.dima-segment {
+  display: inline-flex;
+  gap: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  overflow: hidden;
+}
+
+.dima-segment button {
+  height: 28px;
+  min-width: 52px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8d9baa;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+}
+
+.dima-segment button.active {
+  background: #0a84c6;
+  color: #fff;
+  box-shadow: 0 1px 8px rgba(10,132,198,0.28);
+}
+
+.dima-segment button:not(.active):hover {
+  background: rgba(148,163,184,0.11);
+  color: #d7e1ec;
+}
+
+.header-right-actions {
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.header-status {
+  white-space: nowrap;
+  min-width: 54px;
+}
+
+/* True black mode */
+body[data-theme="black"] {
+  --mf-bg: #000;
+  --mf-panel: #050505;
+  --mf-panel-2: #0a0a0a;
+  --mf-line: rgba(255,255,255,0.13);
+  --mf-text: #f4f7fb;
+  --mf-muted: #9aa6b2;
+  background: #000 !important;
+  color: #f4f7fb;
+}
+
+body[data-theme="black"] #app-header {
+  background: #000 !important;
+  border-bottom-color: #1f2933 !important;
+}
+
+body[data-theme="black"] .header-nav,
+body[data-theme="black"] .dima-segment {
+  background: transparent !important;
+}
+
+body[data-theme="black"] .dima-user-controls {
+  background: #060606 !important;
+  border-color: #252b33 !important;
+}
+
+body[data-theme="black"] #content-dashboard,
+body[data-theme="black"] #content-report,
+body[data-theme="black"] .mf-shell,
+body[data-theme="black"] .report-wrap,
+body[data-theme="black"] .dashboard-wrap {
+  background: #000 !important;
+  color: #f4f7fb !important;
+}
+
+body[data-theme="black"] .mf-card,
+body[data-theme="black"] .mf-kpi,
+body[data-theme="black"] .report-card,
+body[data-theme="black"] .dashboard-card,
+body[data-theme="black"] .dbx-card,
+body[data-theme="black"] .dbx-kpi {
+  background: #070707 !important;
+  border-color: #252b33 !important;
+  color: #f4f7fb !important;
+}
+
+body[data-theme="black"] .mf-kpi .label,
+body[data-theme="black"] .mf-kpi .sub,
+body[data-theme="black"] .mf-title p,
+body[data-theme="black"] .mf-risk-item p,
+body[data-theme="black"] .mf-doe-item p,
+body[data-theme="black"] .mf-rec-item p {
+  color: #9aa6b2 !important;
+}
+
+body[data-theme="black"] #content-3d .workspace-layout,
+body[data-theme="black"] #content-3d .cad-viewport-panel {
+  background: #000 !important;
+}
+
+body[data-theme="black"] #content-3d .cad-model-tree-panel {
+  background: #050505 !important;
+  border-right-color: #252b33 !important;
+}
+
+body[data-theme="black"] #content-3d .cad-model-tree-panel > .panel-header {
+  background: #0b0b0b !important;
+  border-color: #252b33 !important;
+}
+
+body[data-theme="black"] #content-3d #toolbar-3d.horizontal-viewer-toolbar {
+  background: rgba(5,5,5,0.94) !important;
+  border-color: #2a323c !important;
+}
+
+body[data-theme="black"] #content-3d #toolbar-3d .tool-btn {
+  color: #cbd5e1 !important;
+}
+
+body[data-theme="black"] .mf-status-pill,
+body[data-theme="black"] .status-pill,
+body[data-theme="black"] .badge {
+  background: #111827 !important;
+  border-color: #303946 !important;
+  color: #dbeafe !important;
+}
+
+/* White mode */
+body[data-theme="white"] {
+  --mf-bg: #f6f8fb;
+  --mf-panel: #ffffff;
+  --mf-panel-2: #eef3f8;
+  --mf-line: #d5dee8;
+  --mf-text: #17202b;
+  --mf-muted: #5e6b7a;
+
+  /* 코어 색 변수까지 화이트로 재정의 → 개별 규칙이 없는 요소(결과 카드/범례/이슈/콘솔 등)도
+     자동으로 어두운 글씨가 되어 흰 배경에서 가독성을 확보한다. 다크 모드에는 영향 없음. */
+  --bg-base: #f6f8fb;
+  --bg-surface: #ffffff;
+  --bg-card: #ffffff;
+  --bg-glass: rgba(20,35,55,0.035);
+  --border: rgba(10,132,198,0.20);
+  --border-dim: rgba(20,35,55,0.10);
+  --cyan-dim: rgba(10,132,198,0.12);
+  --text-primary: #17202b;
+  --text-secondary: #46566a;
+  --text-muted: #7c8a9c;
+  --creo-bg-dark: #ffffff;
+  --creo-bg-panel: #ffffff;
+  --creo-bg-ribbon: #f3f6fa;
+  --creo-border-cad: #d5dee8;
+  --creo-active-bg: rgba(10,132,198,0.12);
+  --ui-line: rgba(20,35,55,0.10);
+  --ui-line-strong: rgba(20,35,55,0.16);
+  --ui-ink-2: #46566a;
+  --ui-ink-3: #7c8a9c;
+  --ui-shadow-sm: 0 1px 2px rgba(20,35,55,.10);
+  --ui-shadow-md: 0 6px 18px rgba(20,35,55,.14);
+  --c-chrome: #f3f6fa;
+  --c-panel: #ffffff;
+  --c-panel-2: #eef3f8;
+  --c-line: #d5dee8;
+  --c-ink: #17202b;
+  --c-ink-2: #46566a;
+  --c-ink-3: #7c8a9c;
+
+  background: #f6f8fb !important;
+  color: #17202b;
+}
+
+body[data-theme="white"] #app-header {
+  background: #ffffff !important;
+  border-bottom-color: #d7e0ea !important;
+}
+
+body[data-theme="white"] .header-nav,
+body[data-theme="white"] .dima-segment {
+  background: transparent !important;
+}
+
+body[data-theme="white"] .dima-user-controls {
+  background: #edf2f7 !important;
+  border-color: #d5dee8 !important;
+}
+
+body[data-theme="white"] .nav-tab,
+body[data-theme="white"] .dima-segment button {
+  color: #344456 !important;
+}
+
+body[data-theme="white"] .dima-segment button:not(.active):hover {
+  background: #dce6f0 !important;
+  color: #17202b !important;
+}
+
+body[data-theme="white"] .nav-tab.active,
+body[data-theme="white"] .dima-segment button.active {
+  background: #0a84c6 !important;
+  color: #fff !important;
+}
+
+body[data-theme="white"] #content-dashboard,
+body[data-theme="white"] #content-report,
+body[data-theme="white"] .mf-shell,
+body[data-theme="white"] .report-wrap,
+body[data-theme="white"] .dashboard-wrap {
+  background: #f6f8fb !important;
+  color: #17202b !important;
+}
+
+body[data-theme="white"] .mf-card,
+body[data-theme="white"] .mf-kpi,
+body[data-theme="white"] .report-card,
+body[data-theme="white"] .dashboard-card,
+body[data-theme="white"] .dbx-card,
+body[data-theme="white"] .dbx-kpi {
+  background: #ffffff !important;
+  border-color: #d5dee8 !important;
+  color: #17202b !important;
+}
+
+body[data-theme="white"] .mf-kpi .label,
+body[data-theme="white"] .mf-kpi .sub,
+body[data-theme="white"] .mf-title p,
+body[data-theme="white"] .mf-risk-item p,
+body[data-theme="white"] .mf-doe-item p,
+body[data-theme="white"] .mf-rec-item p {
+  color: #5e6b7a !important;
+}
+
+body[data-theme="white"] #content-3d .workspace-layout,
+body[data-theme="white"] #content-3d .cad-viewport-panel {
+  background: #eef3f8 !important;
+}
+
+body[data-theme="white"] #content-3d .cad-model-tree-panel {
+  background: #ffffff !important;
+  border-right-color: #d5dee8 !important;
+}
+
+body[data-theme="white"] #content-3d .cad-model-tree-panel > .panel-header {
+  background: #edf2f7 !important;
+  border-color: #d5dee8 !important;
+}
+
+body[data-theme="white"] #content-3d .cad-model-tree-panel > .panel-header h3,
+body[data-theme="white"] #content-3d .toggle-container,
+body[data-theme="white"] #content-3d .process-parameter span {
+  color: #243244 !important;
+}
+
+body[data-theme="white"] #content-3d .file-info-bar,
+body[data-theme="white"] #content-3d .mat-btn,
+body[data-theme="white"] #content-3d .axis-btn,
+body[data-theme="white"] #content-3d .runner-btn,
+body[data-theme="white"] #content-3d .btn-outline {
+  background: #f6f8fb !important;
+  border-color: #d5dee8 !important;
+  color: #243244 !important;
+}
+
+body[data-theme="white"] #content-3d #toolbar-3d.horizontal-viewer-toolbar {
+  background: rgba(255,255,255,0.95) !important;
+  border-color: #d5dee8 !important;
+}
+
+body[data-theme="white"] #content-3d #toolbar-3d .tool-btn {
+  color: #344456 !important;
+}
+
+/* ── 화이트 모드 가독성 보정: 다크 전용으로 하드코딩된 색을 덮어쓴다 ── */
+body[data-theme="white"] .mold-features {
+  background: #f7f9fc !important;
+  border-color: #d8e0ea !important;
+  color: #17202b !important;
+}
+body[data-theme="white"] .mold-features b,
+body[data-theme="white"] .feature-title { color: #17202b !important; }
+body[data-theme="white"] .feature-card { background: #eef3f8 !important; }
+body[data-theme="white"] .feature-desc { color: #46566a !important; }
+body[data-theme="white"] .legend-row { color: #243244 !important; }
+body[data-theme="white"] .issue-item { color: #37465a !important; }
+body[data-theme="white"] .score-card-simple { background: #ffffff !important; border-color: #d8e0ea !important; }
+body[data-theme="white"] #analysis-disclaimer { color: #5e6b7a !important; }
+body[data-theme="white"] #analysis-disclaimer b { color: #9a6700 !important; }
+body[data-theme="white"] #legend-gradient div { color: #46566a !important; }
+body[data-theme="white"] .cad-message-console,
+body[data-theme="white"] .console-body { background: #ffffff !important; border-color: #d8e0ea !important; }
+body[data-theme="white"] .log-line,
+body[data-theme="white"] .log-line.system { color: #5e6b7a !important; }
+/* 인라인 color:#fff 로 박힌 공정값 라벨이 흰 배경에서 사라지지 않도록 */
+body[data-theme="white"] #content-3d .process-parameter span[style*="#fff"],
+body[data-theme="white"] .score-card-simple span[style*="color:#fff"] { color: #17202b !important; }
+
+/* Theme contrast hardening and production-grade switches */
+.dima-user-controls {
+  height: 40px !important;
+  gap: 8px !important;
+  padding: 4px !important;
+  border-radius: 10px !important;
+}
+
+.dima-switch-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+}
+
+.dima-switch-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+.dima-switch-group .dima-segment {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-width: 118px;
+  height: 32px;
+  padding: 3px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: 999px;
+  background: rgba(12, 18, 28, 0.46);
+  overflow: hidden;
+}
+
+.dima-switch-group .dima-switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  border-radius: 999px;
+  background: #0a84c6;
+  box-shadow: 0 2px 8px rgba(10, 132, 198, 0.28);
+  transform: translateX(0);
+  transition: transform .18s ease, background .18s ease, box-shadow .18s ease;
+}
+
+.dima-switch-group[data-value="en"] .dima-switch-thumb,
+.dima-switch-group[data-value="white"] .dima-switch-thumb {
+  transform: translateX(100%);
+}
+
+.dima-switch-group .dima-segment button {
+  position: relative;
+  z-index: 1;
+  min-width: 0 !important;
+  width: 100%;
+  height: 24px !important;
+  padding: 0 9px !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: #9aa6b2 !important;
+  font-size: 0.72rem !important;
+  font-weight: 850 !important;
+  box-shadow: none !important;
+}
+
+.dima-switch-group .dima-segment button.active {
+  color: #fff !important;
+}
+
+body[data-theme="black"] {
+  --theme-bg: #000;
+  --theme-panel: #050608;
+  --theme-panel-2: #0b0f14;
+  --theme-border: #26313d;
+  --theme-text: #f4f7fb;
+  --theme-text-2: #c8d3df;
+  --theme-muted: #98a6b5;
+}
+
+body[data-theme="white"] {
+  --theme-bg: #f4f7fb;
+  --theme-panel: #ffffff;
+  --theme-panel-2: #eef3f8;
+  --theme-border: #d6e0ea;
+  --theme-text: #17202b;
+  --theme-text-2: #334155;
+  --theme-muted: #627083;
+}
+
+body[data-theme="black"] #content-3d,
+body[data-theme="black"] #content-dashboard,
+body[data-theme="black"] #content-report,
+body[data-theme="white"] #content-3d,
+body[data-theme="white"] #content-dashboard,
+body[data-theme="white"] #content-report {
+  color: var(--theme-text) !important;
+}
+
+body[data-theme] .cad-model-tree-panel,
+body[data-theme] .cad-properties-panel,
+body[data-theme] .panel-header,
+body[data-theme] .properties-content,
+body[data-theme] .mold-features,
+body[data-theme] .score-card-simple,
+body[data-theme] .file-info-bar,
+body[data-theme] .upload-zone,
+body[data-theme] .cad-message-console,
+body[data-theme] .console-body,
+body[data-theme] .report-card,
+body[data-theme] .dashboard-card,
+body[data-theme] .mf-card,
+body[data-theme] .mf-kpi,
+body[data-theme] .dbx-card,
+body[data-theme] .dbx-kpi {
+  background-color: var(--theme-panel) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text) !important;
+}
+
+body[data-theme] .panel-header,
+body[data-theme] #toolbar-3d.horizontal-viewer-toolbar,
+body[data-theme] .dima-user-controls,
+body[data-theme] .feature-card,
+body[data-theme] .issue-filter-bar,
+body[data-theme] .mf-status-pill,
+body[data-theme] .status-pill,
+body[data-theme] .badge {
+  background-color: var(--theme-panel-2) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text) !important;
+}
+
+body[data-theme] .panel-header h3,
+body[data-theme] .tree-node,
+body[data-theme] .tree-leaf,
+body[data-theme] .upload-text,
+body[data-theme] .mold-features b,
+body[data-theme] .mold-features div,
+body[data-theme] .legend-row,
+body[data-theme] .issue-item,
+body[data-theme] .issue-title,
+body[data-theme] .report-stat,
+body[data-theme] .feature-title,
+body[data-theme] .feature-desc,
+body[data-theme] .log-line,
+body[data-theme] .header-status,
+body[data-theme] #status-text {
+  color: var(--theme-text-2) !important;
+}
+
+body[data-theme] .mat-btn,
+body[data-theme] .axis-btn,
+body[data-theme] .runner-btn,
+body[data-theme] .tool-btn,
+body[data-theme] .btn-outline,
+body[data-theme] .filter-btn {
+  background-color: var(--theme-panel-2) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-2) !important;
+}
+
+body[data-theme] .mat-btn.active,
+body[data-theme] .axis-btn.active,
+body[data-theme] .runner-btn.active,
+body[data-theme] .tool-btn.active,
+body[data-theme] .filter-btn.active {
+  background: #0a84c6 !important;
+  border-color: #0aa5d8 !important;
+  color: #fff !important;
+}
+
+body[data-theme="white"] .dima-switch-group .dima-segment {
+  background: #e7edf4 !important;
+  border-color: #cbd7e3 !important;
+}
+
+body[data-theme="white"] .dima-switch-group .dima-segment button {
+  color: #4b5d72 !important;
+}
+
+body[data-theme="white"] .dima-switch-group .dima-segment button.active {
+  color: #fff !important;
+}
+
+body[data-theme="white"] .dima-switch-label {
+  color: #526276 !important;
+}
+
+body[data-theme="black"] .dima-switch-label {
+  color: #9aa6b2 !important;
+}

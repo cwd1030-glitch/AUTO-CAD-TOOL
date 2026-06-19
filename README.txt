@@ -1,41 +1,33 @@
-======================================
-  DIMA - Design Integrity & Manufacturability AI
-  설계 검증 AI 플랫폼 (오프라인 패키지)
-======================================
+DIMA - Design Integrity & Manufacturability AI
+==============================================
 
-■ 실행 방법
------------
-▶ DIMA 실행.bat 을 더블클릭하면 자동으로 실행됩니다.
+실행 방법
+---------
+루트 폴더의 DIMA.exe 하나만 실행하면 됩니다.
 
-■ 요구 사항
------------
-- Windows 10 / 11
-- Chrome 또는 Edge 브라우저 (설치 필요)
-- 인터넷 연결 불필요 (모든 라이브러리 포함)
+  DIMA.exe
 
-■ 테스트 파일
------------
-- samples\sample_bracket.dxf  → 2D 검증 테스트용
-- samples\sample_part.stl     → 3D 분석 테스트용
+실행 후 브라우저에서 자동으로 DIMA 화면이 열립니다.
+자동으로 열리지 않으면 아래 주소를 직접 입력하세요.
 
-■ 사용 방법
------------
-1. [2D 검증] 탭 → DXF 파일 업로드 → 분석 시작
-2. [3D 검증] 탭 → STL 파일 업로드 → 소재 선택 → 사출성형 분석
-3. [리포트]  탭 → 분석 완료 후 통합 리포트 확인
+  http://localhost:8899
 
-■ 폴더 구조
------------
-index.html          ← 메인 파일
-css/style.css       ← 스타일
-js/
-  main.js           ← 앱 로직
-  dxf-analyzer.js   ← 2D 분석
-  stl-analyzer.js   ← 3D 분석
-libs/               ← 오프라인 라이브러리 (Three.js 등)
-samples/            ← 샘플 테스트 파일
+정리 사항
+---------
+사용자가 헷갈리지 않도록 루트 폴더의 실행 진입점은 DIMA.exe 하나로 정리했습니다.
+기존 배치 실행 파일과 중복 app/DIMA.exe는 삭제하지 않고 아래 폴더에 보관했습니다.
 
-■ 문의
------------
-DIMA v1.0 Prototype
-설계 검증 AI 플랫폼 — 오프라인 패키지
+  _unused_quarantine_20260618\legacy_launchers
+
+주요 기능
+---------
+- 2D DXF/DWG 도면 검증
+- 3D STL/STEP 사출물 분석
+- 사출 성형성, 싱크마크, 수축, 변형, 웰드라인, 에어트랩 위험 예측
+- Moldflow 스타일 생산 적합성 대시보드
+- 통합 리포트 출력
+
+개발/빌드 파일
+--------------
+개발용 스크립트와 빌드 도구는 development 폴더에 남겨두었습니다.
+일반 사용자는 DIMA.exe만 실행하면 됩니다.

@@ -76,18 +76,19 @@
         if (typeof r.score === 'number') m.score = Math.round(r.score);
         var d = r.defects || {};
         var sink = d.sink || {}, warp = d.warpage || {}, shrink = d.shrinkage || {};
+        var shrinkSinkSeverity = (sink.severity === 'HIGH' || shrink.riskLevel === 'HIGH') ? 'HIGH'
+          : (sink.severity === 'MEDIUM' || shrink.riskLevel === 'MEDIUM') ? 'MEDIUM'
+          : 'LOW';
         m.sinkCount = sink.count || 0; m.warpCount = warp.count || 0; m.shrinkCount = shrink.count || 0;
-        m.totalDefect = m.sinkCount + m.warpCount + m.shrinkCount;
+        m.totalDefect = m.sinkCount + m.warpCount;
         m.parts = [
-          { label: 'Sink Mark', value: m.sinkCount, sev: sevRank(sink.severity), color: '#ffd166' },
-          { label: 'Warpage',   value: m.warpCount, sev: sevRank(warp.severity), color: '#3b82f6' },
-          { label: 'Shrinkage', value: m.shrinkCount, sev: sevRank(shrink.severity), color: '#ff6b6b' }
+          { label: 'Shrinkage / Sink', value: m.sinkCount || sevRank(shrinkSinkSeverity), sev: sevRank(shrinkSinkSeverity), color: '#ff6b6b' },
+          { label: 'Warpage',   value: m.warpCount, sev: sevRank(warp.severity), color: '#3b82f6' }
         ];
         if (m.totalDefect === 0) m.parts.forEach(function (p) { p.value = p.sev; });
         m.evals = [
-          { name: 'Sink', score: sevToScore(sink.severity) },
-          { name: 'Warp', score: sevToScore(warp.severity) },
-          { name: 'Shrink', score: sevToScore(shrink.severity) }
+          { name: 'Shrink/Sink', score: sevToScore(shrinkSinkSeverity) },
+          { name: 'Warp', score: sevToScore(warp.severity) }
         ];
         if (r.stats && typeof r.stats.undercutPct === 'number') {
           m.evals.push({ name: 'Undercut', score: Math.max(0, Math.min(100, Math.round(100 - r.stats.undercutPct * 2))) });

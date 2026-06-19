@@ -400,3 +400,300 @@
     grid-template-columns: 76px 1fr 34px;
   }
 }
+
+/* Final theme contrast layer: this file loads after style.css. */
+body[data-theme="black"] .mf-shell,
+body[data-theme="black"] #content-dashboard {
+  background: #000 !important;
+  color: #f4f7fb !important;
+}
+
+body[data-theme="black"] .mf-card,
+body[data-theme="black"] .mf-kpi,
+body[data-theme="black"] .mf-step {
+  background: #06080b !important;
+  border-color: #2b3745 !important;
+  color: #f4f7fb !important;
+}
+
+body[data-theme="black"] .mf-title h1,
+body[data-theme="black"] .mf-card-head h2,
+body[data-theme="black"] .mf-kpi .value,
+body[data-theme="black"] .mf-gauge strong,
+body[data-theme="black"] .mf-step strong,
+body[data-theme="black"] .mf-risk-item b,
+body[data-theme="black"] .mf-doe-item b,
+body[data-theme="black"] .mf-rec-item b,
+body[data-theme="black"] .mf-process-table td,
+body[data-theme="black"] .mf-bar-score,
+body[data-theme="black"] .mf-bar-label {
+  color: #f4f7fb !important;
+}
+
+body[data-theme="black"] .mf-title p,
+body[data-theme="black"] .mf-kpi .label,
+body[data-theme="black"] .mf-kpi .sub,
+body[data-theme="black"] .mf-gauge span,
+body[data-theme="black"] .mf-step .tag,
+body[data-theme="black"] .mf-step p,
+body[data-theme="black"] .mf-risk-item p,
+body[data-theme="black"] .mf-doe-item p,
+body[data-theme="black"] .mf-rec-item p,
+body[data-theme="black"] .mf-process-table th,
+body[data-theme="black"] .mf-note {
+  color: #c5d1df !important;
+}
+
+body[data-theme="black"] .mf-card-head,
+body[data-theme="black"] .mf-process-table th,
+body[data-theme="black"] .mf-process-table td {
+  border-color: #2b3745 !important;
+}
+
+body[data-theme="black"] .mf-gauge {
+  background:
+    radial-gradient(circle at center, #06080b 0 55%, transparent 56%),
+    conic-gradient(var(--mf-blue) calc(var(--score, 0) * 1%), #1f2937 0) !important;
+  border-color: #2b3745 !important;
+}
+
+body[data-theme="black"] .mf-bar-track {
+  background: #1f2937 !important;
+}
+
+body[data-theme="white"] .mf-shell,
+body[data-theme="white"] #content-dashboard {
+  background: #f6f8fb !important;
+  color: #17202b !important;
+}
+
+body[data-theme="white"] .mf-title h1,
+body[data-theme="white"] .mf-card-head h2,
+body[data-theme="white"] .mf-kpi .value,
+body[data-theme="white"] .mf-gauge strong,
+body[data-theme="white"] .mf-step strong,
+body[data-theme="white"] .mf-risk-item b,
+body[data-theme="white"] .mf-doe-item b,
+body[data-theme="white"] .mf-rec-item b,
+body[data-theme="white"] .mf-process-table td,
+body[data-theme="white"] .mf-bar-score,
+body[data-theme="white"] .mf-bar-label {
+  color: #17202b !important;
+}
+
+body[data-theme="white"] .mf-title p,
+body[data-theme="white"] .mf-kpi .label,
+body[data-theme="white"] .mf-kpi .sub,
+body[data-theme="white"] .mf-gauge span,
+body[data-theme="white"] .mf-step .tag,
+body[data-theme="white"] .mf-step p,
+body[data-theme="white"] .mf-risk-item p,
+body[data-theme="white"] .mf-doe-item p,
+body[data-theme="white"] .mf-rec-item p,
+body[data-theme="white"] .mf-process-table th,
+body[data-theme="white"] .mf-note {
+  color: #46566a !important;
+}
+
+.cooling-optimization-panel {
+  border-color: rgba(0, 212, 255, 0.32) !important;
+}
+
+.cooling-channel-list {
+  display: grid;
+  gap: 6px;
+}
+
+.cooling-channel-item {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid rgba(0, 212, 255, 0.22);
+  border-radius: 7px;
+  background: rgba(0, 212, 255, 0.06);
+}
+
+.cooling-channel-item b {
+  color: #00d4ff !important;
+  font-size: 0.76rem;
+}
+
+.cooling-channel-item span,
+.cooling-channel-item small {
+  color: inherit;
+  opacity: 0.86;
+  font-size: 0.68rem;
+}
+
+.cooling-color-chart {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.cooling-chart-title {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: inherit;
+}
+
+.cooling-spectrum {
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.18);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);
+}
+
+.cooling-spectrum-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.62rem;
+  color: inherit;
+  opacity: 0.82;
+}
+
+.cooling-chart-bar {
+  display: grid;
+  grid-template-columns: 14px 1fr 68px;
+  gap: 7px;
+  align-items: center;
+  font-size: 0.66rem;
+}
+
+.cooling-chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.cooling-bar-track {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.22);
+  overflow: hidden;
+}
+
+.cooling-bar-track i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.cooling-chart-bar em {
+  font-style: normal;
+  color: inherit;
+  opacity: 0.86;
+  text-align: right;
+}
+
+.viewer-cooling-chart {
+  position: absolute;
+  left: 16px;
+  bottom: 92px;
+  z-index: 42;
+  width: min(390px, calc(100% - 32px));
+  max-height: 210px;
+  overflow: hidden;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 212, 255, 0.32);
+  background: rgba(8, 13, 20, 0.92);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
+  color: #eaf4ff;
+  backdrop-filter: blur(10px);
+}
+
+.viewer-cooling-chart .cooling-chart-title {
+  font-size: 0.7rem;
+  margin-bottom: 2px;
+}
+
+.viewer-cooling-chart .cooling-spectrum {
+  height: 12px;
+}
+
+.viewer-cooling-chart .cooling-chart-bar {
+  grid-template-columns: 14px 1fr 82px;
+  gap: 7px;
+  font-size: 0.62rem;
+}
+
+.viewer-chart-note {
+  font-size: 0.58rem;
+  opacity: 0.72;
+  margin-top: -2px;
+}
+
+#canvas-3d {
+  position: relative;
+}
+
+#btn-sink-overlay,
+#legend-sink {
+  display: none !important;
+}
+
+body[data-theme="white"] .viewer-cooling-chart {
+  background: rgba(247, 250, 253, 0.94);
+  color: #17202b;
+  border-color: rgba(0, 112, 180, 0.28);
+}
+
+body[data-theme="black"] .viewer-cooling-chart {
+  background: rgba(0, 0, 0, 0.92);
+  color: #f4f7fb;
+}
+
+.trust-panel {
+  border-color: rgba(0, 212, 255, 0.32) !important;
+}
+
+.trust-score-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.trust-score-row strong {
+  color: #00d4ff;
+  font-size: 1.05rem;
+}
+
+.trust-meter {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.24);
+  overflow: hidden;
+  margin: 6px 0 8px;
+}
+
+.trust-meter i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+}
+
+.trust-section-title {
+  margin-top: 8px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: #00d4ff;
+}
+
+.trust-panel ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 3px;
+}
+
+.trust-panel li {
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: inherit;
+  opacity: 0.88;
+}

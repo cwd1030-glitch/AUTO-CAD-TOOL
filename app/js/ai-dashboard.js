@@ -131,8 +131,7 @@
     var m = metrics();
     if (!m) return emptyState();
     return '<div class="dima-cards">' +
-      riskCard('Sink Mark', RANK[m.sink]) +
-      riskCard('Shrinkage', RANK[m.shrink]) +
+      riskCard('Shrinkage / Sink', Math.max(RANK[m.sink] || 0, RANK[m.shrink] || 0)) +
       riskCard('Warpage', RANK[m.warp]) +
       card('Undercut', m.undercutPct.toFixed(1) + '%', '언더컷 면적 비율') +
       card('Weld Line', m.weld + '개', '수지 회합부') +
