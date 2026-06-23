@@ -5,7 +5,7 @@ import numpy as np
 # Add python_backend to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'python_backend'))
 
-from cooling_solver import solve_mold_cooling
+from cooling_core import solve_mold_cooling
 import flow_solver
 
 def calculate_transient_thermal_field(data):

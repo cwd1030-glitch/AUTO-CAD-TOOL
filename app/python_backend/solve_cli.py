@@ -4,7 +4,8 @@ import argparse
 import numpy as np
 from voxelizer import voxelize_mesh
 from solver import solve_injection_flow
-from cooling_solver import solve_mold_cooling, calculate_warpage_and_sink
+from cooling_core import solve_mold_cooling, calculate_warpage_and_sink
+from ml_predictor import predict_quality
 
 def main():
     parser = argparse.ArgumentParser()
@@ -17,8 +18,8 @@ def main():
     args = parser.parse_args()
 
     try:
-        # Parse gates JSON
-        with open(args.gates_file, 'r', encoding='utf-8') as f:
+        # Parse gates JSON (utf-8-sig tolerates a leading BOM if the caller wrote one)
+        with open(args.gates_file, 'r', encoding='utf-8-sig') as f:
             gates = json.load(f)
         
         # Load mesh and voxelize
@@ -79,6 +80,30 @@ def main():
         displacements, sink_risk = calculate_warpage_and_sink(
             voxel_grid, T_final, solidification_time, parting_axis=2
         )
+        finite_fill = fill_times[np.isfinite(fill_times) & voxel_grid]
+        part_volume = float(getattr(mesh, "volume", 0.0) or (int(voxel_grid.sum()) * (pitch ** 3)))
+        surface_area = float(getattr(mesh, "area", 0.0) or 0.0)
+        bounds = np.asarray(getattr(mesh, "bounds", np.zeros((2, 3))), dtype=float)
+        extents = np.abs(bounds[1] - bounds[0]) if bounds.shape == (2, 3) else np.zeros(3)
+        positive_extents = extents[extents > 1e-9]
+        mean_thickness = float(np.min(positive_extents)) if positive_extents.size else float(args.resolution)
+        flow_rate = 50.0
+        pressure_limit = 100.0
+        pressure_drop = float(np.nanmax(finite_fill)) * 8.0 if finite_fill.size else 0.0
+        ml_features = {
+            "volume_mm3": abs(part_volume),
+            "surface_area_mm2": surface_area,
+            "mean_thickness_mm": mean_thickness,
+            "triangle_count": float(len(getattr(mesh, "faces", []))),
+            "gate_count": float(max(len(mapped_gates), 1)),
+            "melt_temp_c": args.melt_temp,
+            "mold_temp_c": args.coolant_temp,
+            "flow_rate_cm3_s": flow_rate,
+            "pressure_limit_mpa": pressure_limit,
+            "undercut_ratio": 0.0,
+            "runner_hot": 0.0,
+        }
+        ml_prediction = predict_quality(ml_features)
         
         # Map voxel results back to the original STL mesh vertices
         mesh_vertices = mesh.vertices
@@ -122,7 +147,17 @@ def main():
             "vertex_sink_risk": vertex_sink_risk.tolist(),
             "weld_lines": weld_lines_mesh,
             "hot_spots": hot_spots_mesh,
-            "cycle_time": float(cycle_time)
+            "cycle_time": float(cycle_time),
+            "mesh_quality": grid_metadata.get("mesh_quality", {}),
+            "quality_prediction": ml_prediction,
+            "diagnostics": {
+                "filling_time": float(np.nanmax(finite_fill)) if finite_fill.size else 0.0,
+                "estimated_pressure_drop": pressure_drop,
+                "mesh_volume_mm3": abs(part_volume),
+                "mesh_surface_area_mm2": surface_area,
+                "mean_thickness_mm": mean_thickness,
+                "solver_mode": "thermal_coupled" if cooling_on else "geometric_flow"
+            }
         }
         print(json.dumps(output))
         

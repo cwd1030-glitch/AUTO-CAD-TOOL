@@ -9,7 +9,7 @@
 const App = {
   currentTab: '3d',
   dxf: { file: null, parsed: null, result: null },
-  stl: { file: null, parsed: null, result: null, material: 'ABS', pullAxis: 'Z', flipAxis: false, showCores: false, showParting: false, fillingTime: 2.0, analysisChartMode: 'draft' },
+  stl: { file: null, parsed: null, result: null, material: 'ABS', pullAxis: 'Z', flipAxis: false, showCores: false, showParting: false, fillingTime: 2.0, analysisChartMode: 'draft', validationComparison: null, meshDetailQuality: 'ultra' },
   threeInit: false,
 };
 // const 선언은 window 프로퍼티가 되지 않으므로 명시적으로 전역 노출
@@ -25,6 +25,25 @@ let current3DFilter = 'all';
    HELPERS
 ══════════════════════════════════════ */
 function $(id) { return document.getElementById(id); }
+
+const MESH_DETAIL_PRESETS = {
+  fast: { label: '빠름', resolution: 0.8 },
+  fine: { label: '정밀', resolution: 0.35 },
+  ultra: { label: '초정밀', resolution: 0.15 }
+};
+
+function getMeshDetailPresetName() {
+  const key = App.stl.meshDetailQuality || 'ultra';
+  return MESH_DETAIL_PRESETS[key] ? key : 'ultra';
+}
+
+function getMeshDetailLabel(key = getMeshDetailPresetName()) {
+  return (MESH_DETAIL_PRESETS[key] || MESH_DETAIL_PRESETS.ultra).label;
+}
+
+function getMeshDetailResolution() {
+  return (MESH_DETAIL_PRESETS[getMeshDetailPresetName()] || MESH_DETAIL_PRESETS.ultra).resolution;
+}
 
 function logToConsole(msg, type = 'system') {
   const box = $('console-logs-box');
@@ -534,6 +553,22 @@ window.addEventListener('DOMContentLoaded', () => {
       renderMoldFeatures();
     });
   }
+
+  document.querySelectorAll('.mesh-detail-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.meshDetail === getMeshDetailPresetName());
+    btn.addEventListener('click', () => {
+      const detail = btn.dataset.meshDetail || 'ultra';
+      App.stl.meshDetailQuality = MESH_DETAIL_PRESETS[detail] ? detail : 'ultra';
+      document.querySelectorAll('.mesh-detail-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      logToConsole(`메쉬 정밀도 변경: ${getMeshDetailLabel()} (${getMeshDetailResolution()} mm pitch)`, 'info');
+      if (App.stl.file) {
+        App.stl.parsed = null;
+        App.stl.result = null;
+        setTimeout(() => run3DAnalysis(), 40);
+      }
+    });
+  });
 });
 
 input3d.addEventListener('change', () => { if (input3d.files[0]) handle3DFile(input3d.files[0]); });
@@ -731,7 +766,8 @@ async function sendDataToPython() {
   const payload = {
     stl_data: base64Stl,
     gates: gates,
-    resolution: 0.5,
+    resolution: getMeshDetailResolution(),
+    mesh_detail_quality: getMeshDetailPresetName(),
     melt_temp: meltVal,
     eject_temp: 80.0,
     cooling_enabled: coolingEnabled,
@@ -744,7 +780,7 @@ async function sendDataToPython() {
 
   logToConsole('파이썬 백엔드로 사출/냉각 정밀 해석 요청 중...', 'info');
   try {
-    const response = await fetch('http://127.0.0.1:5000/api/analyze', {
+    const response = await fetch('/api/analyze', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -806,6 +842,13 @@ async function triggerPhysicalReanalysis() {
       if (flowRes.diagnostics) {
         updateDiagnosticsPanel(flowRes.diagnostics);
         if (App.stl.result) App.stl.result.diagnostics = flowRes.diagnostics;
+      }
+      if (flowRes.meshQuality && App.stl.result) {
+        App.stl.result.meshQuality = flowRes.meshQuality;
+        renderMeshQualityPanel(flowRes.meshQuality);
+      }
+      if (flowRes.qualityPrediction && App.stl.result) {
+        App.stl.result.qualityPrediction = flowRes.qualityPrediction;
       }
       if (flowRes.defects && App.stl.result) {
         App.stl.result.defects = {
@@ -882,12 +925,35 @@ if (chkAutoRotate) {
 function setEngineBadge(precise) {
   const el = document.getElementById('engine-badge');
   if (!el) return;
+
+  // 정밀 유동 솔버(번들 solve_cli)가 실패해 로컬 근사로 대체된 경우 최우선 경고.
+  // 사용자가 "근사 결과"임을 명확히 알도록 검증값 상태보다 우선 표시한다.
+  let fidelity = 'precise';
+  try {
+    if (window.STLAnalyzer && typeof window.STLAnalyzer.getSolverFidelity === 'function') {
+      fidelity = window.STLAnalyzer.getSolverFidelity();
+    }
+  } catch (e) {}
+  if (fidelity === 'approximate') {
+    el.textContent = '근사(로컬) 결과 · 정밀 엔진 미사용';
+    el.style.color = '#ffb347';
+    el.style.borderColor = 'rgba(255,179,71,0.5)';
+    el.title = '정밀 분석 엔진을 사용할 수 없어 로컬 근사 알고리즘으로 계산된 결과입니다. 정밀도가 제한됩니다.';
+    return;
+  }
+  el.title = '';
+
+  const calibration = buildCalibrationModel();
   if (precise) {
-    el.textContent = '정밀 해석 · 검증된 솔버';
+    el.textContent = '정밀 해석 · 검증 솔버';
     el.style.color = '#00ffa3';
     el.style.borderColor = 'rgba(0,255,163,0.45)';
+  } else if (calibration.count > 0) {
+    el.textContent = `검증 보정 적용 · 샘플 ${calibration.count}건`;
+    el.style.color = '#7dd3fc';
+    el.style.borderColor = 'rgba(125,211,252,0.45)';
   } else {
-    el.textContent = '간이 추정 · 형상 기반';
+    el.textContent = '형상 기반 예측 · 검증값 필요';
     el.style.color = '#ffd166';
     el.style.borderColor = 'rgba(255,209,102,0.4)';
   }
@@ -900,8 +966,214 @@ function safeDisplay(value, digits = 1) {
   return Number.isFinite(n) ? n.toFixed(digits) : '-';
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function clampTrust(value) {
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function percentError(predicted, reference) {
+  const p = Number(predicted);
+  const r = Number(reference);
+  if (!Number.isFinite(p) || !Number.isFinite(r) || Math.abs(r) < 1e-6) return null;
+  return Math.abs(p - r) / Math.abs(r) * 100;
+}
+
+function trustFromError(err, base = 70) {
+  if (err == null) return base;
+  if (err <= 5) return 94;
+  if (err <= 10) return 86;
+  if (err <= 20) return 74;
+  if (err <= 35) return 58;
+  return 42;
+}
+
+const CALIBRATION_STORAGE_KEY = 'dima.injection.calibrationSamples.v1';
+
+function finiteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function loadCalibrationSamples() {
+  try {
+    const raw = localStorage.getItem(CALIBRATION_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(Boolean).slice(-100) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveCalibrationSamples(samples) {
+  try {
+    localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(samples.slice(-100)));
+  } catch (e) {}
+}
+
+function clearCalibrationSamples() {
+  try {
+    localStorage.removeItem(CALIBRATION_STORAGE_KEY);
+  } catch (e) {}
+}
+
+function median(values) {
+  const arr = values.filter(v => Number.isFinite(v)).sort((a, b) => a - b);
+  if (!arr.length) return null;
+  const mid = Math.floor(arr.length / 2);
+  return arr.length % 2 ? arr[mid] : (arr[mid - 1] + arr[mid]) / 2;
+}
+
+function getPredictionSnapshot(result = App.stl.result) {
+  const r = result || {};
+  const base = r._calibrationBase || {};
+  const diag = base.diagnostics || r.diagnostics || {};
+  const shrink = base.shrinkage || r.defects?.shrinkage || {};
+  const warp = base.warpage || r.defects?.warpage || {};
+  return {
+    fillTime: finiteNumber(diag.fillingTime),
+    coolingTime: finiteNumber(diag.maxCoolingTime || diag.coolingTime),
+    pressureDrop: finiteNumber(diag.estimatedPressureDrop),
+    maxShrinkage: finiteNumber(shrink.maxShrinkage),
+    warpMagnitude: finiteNumber(warp.magnitude)
+  };
+}
+
+function captureCalibrationBase(result) {
+  if (!result || result._calibrationBase) return;
+  result._calibrationBase = {
+    diagnostics: result.diagnostics ? {
+      fillingTime: finiteNumber(result.diagnostics.fillingTime),
+      maxCoolingTime: finiteNumber(result.diagnostics.maxCoolingTime),
+      coolingTime: finiteNumber(result.diagnostics.coolingTime),
+      estimatedPressureDrop: finiteNumber(result.diagnostics.estimatedPressureDrop)
+    } : null,
+    shrinkage: result.defects?.shrinkage ? {
+      maxShrinkage: finiteNumber(result.defects.shrinkage.maxShrinkage),
+      avgShrinkage: finiteNumber(result.defects.shrinkage.avgShrinkage),
+      globalShrinkage: finiteNumber(result.defects.shrinkage.globalShrinkage),
+      p90Shrinkage: finiteNumber(result.defects.shrinkage.p90Shrinkage)
+    } : null,
+    warpage: result.defects?.warpage ? {
+      magnitude: finiteNumber(result.defects.warpage.magnitude)
+    } : null
+  };
+}
+
+function restoreCalibrationBase(result) {
+  const base = result?._calibrationBase;
+  if (!result || !base) return;
+  if (base.diagnostics && result.diagnostics) {
+    ['fillingTime', 'maxCoolingTime', 'coolingTime', 'estimatedPressureDrop'].forEach(key => {
+      if (Number.isFinite(base.diagnostics[key])) result.diagnostics[key] = base.diagnostics[key];
+    });
+  }
+  if (base.shrinkage && result.defects?.shrinkage) {
+    ['maxShrinkage', 'avgShrinkage', 'globalShrinkage', 'p90Shrinkage'].forEach(key => {
+      if (Number.isFinite(base.shrinkage[key])) result.defects.shrinkage[key] = base.shrinkage[key];
+    });
+    result.defects.shrinkage.calibrated = false;
+  }
+  if (base.warpage && result.defects?.warpage && Number.isFinite(base.warpage.magnitude)) {
+    result.defects.warpage.magnitude = base.warpage.magnitude;
+    result.defects.warpage.calibrated = false;
+  }
+}
+
+function buildCalibrationModel() {
+  const samples = loadCalibrationSamples();
+  const keys = ['fillTime', 'coolingTime', 'pressureDrop', 'maxShrinkage', 'warpMagnitude'];
+  const factors = {};
+  const counts = {};
+  keys.forEach(key => {
+    const ratios = samples
+      .map(sample => {
+        const pred = finiteNumber(sample.predicted?.[key]);
+        const ref = finiteNumber(sample.reference?.[key]);
+        if (!pred || !ref || pred <= 0 || ref <= 0) return null;
+        return Math.max(0.35, Math.min(2.5, ref / pred));
+      })
+      .filter(v => v != null);
+    counts[key] = ratios.length;
+    factors[key] = ratios.length ? median(ratios) : 1;
+  });
+  const count = samples.length;
+  const usableMetricCount = Object.values(counts).filter(v => v > 0).length;
+  return {
+    count,
+    usableMetricCount,
+    factors,
+    counts,
+    confidence: clampTrust(Math.min(92, 20 + count * 8 + usableMetricCount * 7))
+  };
+}
+
+function addCalibrationSample(reference) {
+  if (!App.stl.result) return { saved: false, reason: '해석 결과 없음' };
+  const predicted = getPredictionSnapshot();
+  const usable = Object.keys(reference).some(key => finiteNumber(reference[key]) != null && finiteNumber(predicted[key]) != null);
+  if (!usable) return { saved: false, reason: '비교 가능한 값 없음' };
+  const samples = loadCalibrationSamples();
+  samples.push({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: new Date().toISOString(),
+    file: App.stl.file?.name || '',
+    material: App.stl.material || '',
+    predicted,
+    reference
+  });
+  saveCalibrationSamples(samples);
+  return { saved: true, count: samples.length };
+}
+
+function applyCalibrationToResult(result) {
+  if (!result) return result;
+  captureCalibrationBase(result);
+  restoreCalibrationBase(result);
+  const model = buildCalibrationModel();
+  if (model.count < 1 || model.usableMetricCount < 1) {
+    result.calibration = model;
+    return result;
+  }
+  const f = model.factors;
+  if (result.diagnostics) {
+    if (Number.isFinite(result.diagnostics.fillingTime) && model.counts.fillTime > 0) {
+      result.diagnostics.fillingTime *= f.fillTime;
+    }
+    if (Number.isFinite(result.diagnostics.maxCoolingTime) && model.counts.coolingTime > 0) {
+      result.diagnostics.maxCoolingTime *= f.coolingTime;
+    }
+    if (Number.isFinite(result.diagnostics.coolingTime) && model.counts.coolingTime > 0) {
+      result.diagnostics.coolingTime *= f.coolingTime;
+    }
+    if (Number.isFinite(result.diagnostics.estimatedPressureDrop) && model.counts.pressureDrop > 0) {
+      result.diagnostics.estimatedPressureDrop *= f.pressureDrop;
+    }
+  }
+  const shrink = result.defects?.shrinkage;
+  if (shrink && model.counts.maxShrinkage > 0) {
+    ['maxShrinkage', 'avgShrinkage', 'globalShrinkage', 'p90Shrinkage'].forEach(key => {
+      if (Number.isFinite(shrink[key])) shrink[key] *= f.maxShrinkage;
+    });
+    shrink.confidence = Math.max(shrink.confidence || 0, Math.min(96, model.confidence));
+    shrink.calibrated = true;
+  }
+  const warp = result.defects?.warpage;
+  if (warp && Number.isFinite(warp.magnitude) && model.counts.warpMagnitude > 0) {
+    warp.magnitude *= f.warpMagnitude;
+    warp.confidence = Math.max(warp.confidence || 0, Math.min(94, model.confidence));
+    warp.calibrated = true;
+  }
+  result.calibration = model;
+  result.validated = true;
+  return result;
 }
 
 function computeTrustModel() {
@@ -922,8 +1194,12 @@ function computeTrustModel() {
   const sink = result.defects?.sink || {};
   const warp = result.defects?.warpage || {};
   const diag = result.diagnostics || {};
+  const meshQuality = result.meshQuality || result.mesh_quality || (window.STLAnalyzer && typeof STLAnalyzer.getMeshQuality === 'function' ? STLAnalyzer.getMeshQuality() : null);
+  const validation = App.stl.validationComparison || {};
   const evidence = [];
   const limits = [];
+  const actions = [];
+  const uncertaintyDrivers = [];
   let inputScore = 20;
 
   if (isStep) {
@@ -945,6 +1221,26 @@ function computeTrustModel() {
   } else {
     inputScore += 2;
     limits.push('메쉬 해상도가 낮아 국부 결함 위치 정확도가 제한될 수 있습니다.');
+  }
+
+  if (meshQuality) {
+    const meshScore = Number(meshQuality.score);
+    if (meshQuality.status === 'pass' || meshScore >= 82) {
+      inputScore += 12;
+      evidence.push(`메쉬 설정 검증 ${Number.isFinite(meshScore) ? Math.round(meshScore) : '-'}점으로 해석 가능한 상태입니다.`);
+    } else if (meshQuality.status === 'fail' || meshScore < 55) {
+      inputScore -= 14;
+      limits.push('메쉬 설정 검증에서 실패 항목이 있어 CADMOULD식 재메쉬/수정 후 해석을 권장합니다.');
+      uncertaintyDrivers.push('메쉬 품질 실패');
+      actions.push('열린 경계, non-manifold 엣지, 비정상 삼각형을 수정한 뒤 다시 업로드');
+    } else {
+      inputScore += 3;
+      limits.push('메쉬 설정 검증에 경고가 있어 결과 위치 정밀도에 오차가 생길 수 있습니다.');
+      uncertaintyDrivers.push('메쉬 품질 경고');
+      actions.push('메쉬 검증 패널의 수정 권장 항목 확인');
+    }
+  } else {
+    limits.push('메쉬 설정 검증값이 아직 없어 해석 전 메쉬 승인 상태를 확인해야 합니다.');
   }
 
   if (App.stl.material) {
@@ -995,19 +1291,121 @@ function computeTrustModel() {
     evidence.push(`언더컷 비율 ${undercutPct.toFixed(1)}%가 금형성 점수에 반영되었습니다.`);
   }
 
+  const fillErr = percentError(diag.fillingTime, validation.fillTime);
+  const coolErr = percentError(diag.maxCoolingTime || diag.coolingTime, validation.coolingTime);
+  const pressureErr = percentError(diag.estimatedPressureDrop, validation.pressureDrop);
+  const shrinkErr = percentError(shrink.maxShrinkage, validation.maxShrinkage);
+  const warpMagErr = percentError(warp.magnitude, validation.warpMagnitude);
+  const calibrationModel = buildCalibrationModel();
+  const hasValidation = validation.fillTime || validation.coolingTime || validation.pressureDrop || validation.maxShrinkage || validation.warpMagnitude || validation.warpMatch || validation.trialResult;
+  const paperBasis = [];
+  let validationBonus = 0;
+  if (fillErr != null) {
+    validationBonus += fillErr <= 15 ? 8 : fillErr <= 30 ? 3 : -5;
+    evidence.push(`Moldflow 충전시간 비교 오차 ${fillErr.toFixed(1)}%를 신뢰도에 반영했습니다.`);
+  }
+  if (coolErr != null) {
+    validationBonus += coolErr <= 15 ? 8 : coolErr <= 30 ? 3 : -5;
+    evidence.push(`Moldflow 냉각시간 비교 오차 ${coolErr.toFixed(1)}%를 신뢰도에 반영했습니다.`);
+  }
+  if (pressureErr != null) {
+    validationBonus += pressureErr <= 18 ? 8 : pressureErr <= 35 ? 3 : -5;
+    evidence.push(`Moldflow 압력강하 비교 오차 ${pressureErr.toFixed(1)}%를 신뢰도에 반영했습니다.`);
+  }
+  if (shrinkErr != null) {
+    validationBonus += shrinkErr <= 12 ? 9 : shrinkErr <= 25 ? 4 : -6;
+    evidence.push(`수축률 비교 오차 ${shrinkErr.toFixed(1)}%를 신뢰도와 보정계수에 반영했습니다.`);
+  }
+  if (warpMagErr != null) {
+    validationBonus += warpMagErr <= 15 ? 8 : warpMagErr <= 30 ? 3 : -6;
+    evidence.push(`변형량 비교 오차 ${warpMagErr.toFixed(1)}%를 신뢰도와 보정계수에 반영했습니다.`);
+  }
+  if (validation.warpMatch === 'yes') {
+    validationBonus += 6;
+    evidence.push('Moldflow/실측 변형 방향과 DIMA 변형 방향이 일치합니다.');
+  } else if (validation.warpMatch === 'no') {
+    validationBonus -= 8;
+    limits.push('Moldflow/실측 변형 방향과 DIMA 예측 방향이 불일치합니다.');
+  }
+  if (validation.trialResult === 'pass') {
+    validationBonus += 7;
+    evidence.push('시사출 결과 양품 기록이 반영되었습니다.');
+  } else if (validation.trialResult === 'fail') {
+    validationBonus -= 7;
+    limits.push('시사출 불량 기록이 있어 DIMA 위험 예측을 재검토해야 합니다.');
+  }
+  if (!hasValidation) {
+    limits.push('Moldflow 또는 시사출 비교값이 아직 없어 신뢰도는 내부 추정 기준입니다.');
+    uncertaintyDrivers.push('비교 검증값 없음');
+    actions.push('Moldflow 충전시간/냉각시간/압력강하 중 최소 2개 이상 입력');
+  }
+
+  if (!gateCount) {
+    uncertaintyDrivers.push('게이트 미지정');
+    actions.push('게이트 위치를 지정한 뒤 충전/보압 결과 재계산');
+  }
+  if (!hasCooling) {
+    uncertaintyDrivers.push('냉각 조건 미적용');
+    actions.push('냉각 탭을 켜고 냉각 위치/시간 분포 확인');
+  }
+  if (!hasDiagnostics) {
+    uncertaintyDrivers.push('공정 진단값 부족');
+    actions.push('수지온도, 금형온도, 사출속도, 압력 한계 입력 후 재분석');
+  }
+  if (triCount < 50000) {
+    uncertaintyDrivers.push('메쉬 해상도 제한');
+    actions.push('가능하면 원본 STEP 또는 더 높은 해상도 STL 사용');
+  }
+  if (calibrationModel.count > 0) {
+    evidence.push(`누적 검증 샘플 ${calibrationModel.count}건의 중앙값 보정계수를 해석값에 적용합니다.`);
+  } else {
+    actions.push('검증값 적용 버튼으로 첫 보정 샘플 저장');
+  }
+
+  paperBasis.push('Moldflow surrogate 연구 기준: 게이트 거리, 게이트 정보, 형상 피처가 충전시간/변형 분포 신뢰도에 중요합니다.');
+  paperBasis.push('Warpage 불확실성 연구 기준: 금형온도, 사출속도, 보압, 보압시간 변화에 대한 강건성 확인이 필요합니다.');
+  paperBasis.push('Conformal cooling 연구 기준: 냉각시간, 온도구배, 잔류응력, 변형량을 함께 낮춰야 냉각 신뢰도가 올라갑니다.');
+  paperBasis.push('온라인 품질 예측 연구 기준: 실제 공정/센서/시사출 데이터 해상도가 낮으면 예측 신뢰도가 떨어집니다.');
+
   limits.push('최종 양산 판단 전 실제 소재 PVT 데이터, 사출기 용량, 금형 냉각 회로, 시사출 측정값으로 검증해야 합니다.');
   limits.push('Moldflow 비교값을 입력하면 이 신뢰도는 자동으로 상향/하향 보정되어야 합니다.');
 
   const inputQuality = clampTrust(inputScore);
   const issuePenalty = (result.issues || []).reduce((sum, item) => sum + (item.level === 'error' ? 7 : item.level === 'warning' ? 3 : 0), 0);
   const defectPenalty = Math.min(18, (sink.count || 0) * 0.8 + (warp.risk === 'HIGH' ? 8 : warp.risk === 'MEDIUM' ? 4 : 0));
-  const overall = clampTrust(inputQuality - issuePenalty - defectPenalty + (hasValidatedSolver ? 8 : 0));
-  const grade = overall >= 82 ? '검증 보강됨' : overall >= 65 ? '설계 검토용' : overall >= 45 ? '초기 추정' : '근거 부족';
+  const shrinkConfidence = Number.isFinite(Number(shrink.confidence)) ? Number(shrink.confidence) : null;
+  const shrinkUncertainty = Number.isFinite(Number(shrink.uncertainty)) ? Number(shrink.uncertainty) : null;
+  const warpConfidence = Number.isFinite(Number(warp.confidence)) ? Number(warp.confidence) : null;
+  const warpUncertainty = Number.isFinite(Number(warp.uncertainty)) ? Number(warp.uncertainty) : null;
+  const category = {
+    fill: clampTrust(trustFromError(fillErr, hasDiagnostics && gateCount ? 74 : 52) + (gateCount ? 6 : -8)),
+    shrink: clampTrust((hasDefects ? 66 : 45) + (App.stl.material ? 8 : -8) + (hasCooling ? 7 : -4) + (hasValidation ? 8 : 0) + (shrinkErr != null ? (trustFromError(shrinkErr, 70) - 70) * 0.25 : 0) + (shrinkConfidence != null ? (shrinkConfidence - 60) * 0.25 : 0) - (shrinkUncertainty != null ? shrinkUncertainty * 0.10 : 0) - Math.min(18, sink.count || 0)),
+    cooling: clampTrust(trustFromError(coolErr, hasCooling ? 72 : 46) + (hasCooling ? 8 : -10)),
+    warpage: clampTrust((warp.risk ? 62 : 42) + (hasCooling ? 7 : -4) + (warpMagErr != null ? (trustFromError(warpMagErr, 70) - 70) * 0.22 : 0) + (warpConfidence != null ? (warpConfidence - 55) * 0.25 : 0) - (warpUncertainty != null ? warpUncertainty * 0.08 : 0) + (validation.warpMatch === 'yes' ? 18 : validation.warpMatch === 'no' ? -18 : 0)),
+    tooling: clampTrust(72 + (isStep ? 8 : 0) + (hasRecommendation ? 8 : -6) - Math.min(18, undercutPct * 0.4))
+  };
+  const uncertainty = {
+    fill: clampTrust(100 - category.fill + (!validation.fillTime ? 12 : 0)),
+    shrink: clampTrust(shrinkUncertainty != null ? shrinkUncertainty + (!validation.trialResult ? 8 : 0) : 100 - category.shrink + (!hasCooling ? 10 : 0) + (!validation.trialResult ? 8 : 0)),
+    cooling: clampTrust(100 - category.cooling + (!validation.coolingTime ? 12 : 0)),
+    warpage: clampTrust(warpUncertainty != null ? warpUncertainty + (!validation.warpMatch ? 8 : 0) : 100 - category.warpage + (!validation.warpMatch ? 12 : 0)),
+    tooling: clampTrust(100 - category.tooling + (isStep ? 0 : 10))
+  };
+  const categoryAvg = Object.values(category).reduce((a, b) => a + b, 0) / Object.keys(category).length;
+  const overall = clampTrust((inputQuality * 0.45) + (categoryAvg * 0.55) - issuePenalty - defectPenalty + validationBonus + (hasValidatedSolver ? 8 : 0) + Math.min(8, calibrationModel.count * 1.5));
+  const grade = overall >= 82 ? '검증 보강됨' : overall >= 65 ? '설계 검토용' : overall >= 45 ? '초기 검토' : '검증 데이터 필요';
 
   return {
     overall,
     inputQuality,
     grade,
+    category,
+    uncertainty,
+    validation: { fillErr, coolErr, pressureErr, shrinkErr, warpMagErr, hasValidation },
+    calibration: calibrationModel,
+    paperBasis,
+    actions: Array.from(new Set(actions)).slice(0, 5),
+    uncertaintyDrivers: Array.from(new Set(uncertaintyDrivers)).slice(0, 5),
     evidence: evidence.slice(0, 6),
     limits: Array.from(new Set(limits)).slice(0, 5)
   };
@@ -1017,6 +1415,7 @@ function renderTrustPanel() {
   const panel = $('trust-panel-3d');
   if (!panel || !App.stl.result) return;
   const trust = computeTrustModel();
+  const validation = App.stl.validationComparison || {};
   panel.style.display = 'block';
   $('trust-overall-score').textContent = `${trust.overall}%`;
   $('trust-input-quality').textContent = `${trust.inputQuality}%`;
@@ -1028,8 +1427,95 @@ function renderTrustPanel() {
   }
   const evidenceList = $('trust-evidence-list');
   const limitList = $('trust-limit-list');
+  const categoryGrid = $('trust-category-grid');
+  if (categoryGrid) {
+    const names = { fill: '충전', shrink: '수축', cooling: '냉각', warpage: '변형', tooling: '금형성' };
+    categoryGrid.innerHTML = Object.keys(trust.category).map(key => {
+      const val = trust.category[key];
+      const band = trust.uncertainty?.[key] ?? 0;
+      return `<div><span>${names[key]}</span><b>${val}%</b><i style="width:${val}%"></i><em>±${band}%</em></div>`;
+    }).join('');
+  }
+  const uncertaintyBox = $('trust-uncertainty-box');
+  if (uncertaintyBox) {
+    const avgBand = Math.round(Object.values(trust.uncertainty || {}).reduce((a, b) => a + b, 0) / Math.max(1, Object.keys(trust.uncertainty || {}).length));
+    uncertaintyBox.innerHTML = `<b>불확실성 폭 ±${avgBand}%</b><span>${trust.uncertaintyDrivers.length ? trust.uncertaintyDrivers.join(' / ') : '주요 누락 조건 없음'}</span>`;
+  }
+  const paperList = $('trust-paper-basis-list');
+  const actionList = $('trust-action-list');
+  if (paperList) paperList.innerHTML = trust.paperBasis.map(item => `<li>${item}</li>`).join('');
+  if (actionList) actionList.innerHTML = (trust.actions.length ? trust.actions : ['현재 입력 기준에서 추가 액션 없음']).map(item => `<li>${item}</li>`).join('');
+  const calibrationStatus = $('trust-calibration-status');
+  if (calibrationStatus) {
+    const c = trust.calibration || buildCalibrationModel();
+    calibrationStatus.textContent = `보정 샘플 ${c.count}건 · 보정 신뢰도 ${c.confidence}% · 적용 항목 ${c.usableMetricCount}개`;
+  }
   if (evidenceList) evidenceList.innerHTML = trust.evidence.map(item => `<li>${item}</li>`).join('');
   if (limitList) limitList.innerHTML = trust.limits.map(item => `<li>${item}</li>`).join('');
+  if ($('trust-mf-fill')) $('trust-mf-fill').value = validation.fillTime || '';
+  if ($('trust-mf-cool')) $('trust-mf-cool').value = validation.coolingTime || '';
+  if ($('trust-mf-pressure')) $('trust-mf-pressure').value = validation.pressureDrop || '';
+  if ($('trust-mf-shrink')) $('trust-mf-shrink').value = validation.maxShrinkage || '';
+  if ($('trust-mf-warp-mm')) $('trust-mf-warp-mm').value = validation.warpMagnitude || '';
+  if ($('trust-mf-warp')) $('trust-mf-warp').value = validation.warpMatch || '';
+  if ($('trust-trial-result')) $('trust-trial-result').value = validation.trialResult || '';
+  bindTrustValidationInputs();
+}
+
+function bindTrustValidationInputs() {
+  const btn = $('trust-apply-validation');
+  const resetBtn = $('trust-reset-calibration');
+  if (btn && btn.dataset.bound !== '1') {
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      const readNumber = (id) => {
+        const el = $(id);
+        const n = Number(el && el.value);
+        return Number.isFinite(n) && el.value !== '' ? n : null;
+      };
+      App.stl.validationComparison = {
+        fillTime: readNumber('trust-mf-fill'),
+        coolingTime: readNumber('trust-mf-cool'),
+        pressureDrop: readNumber('trust-mf-pressure'),
+        maxShrinkage: readNumber('trust-mf-shrink'),
+        warpMagnitude: readNumber('trust-mf-warp-mm'),
+        warpMatch: $('trust-mf-warp')?.value || '',
+        trialResult: $('trust-trial-result')?.value || ''
+      };
+      const sampleResult = addCalibrationSample({
+        fillTime: App.stl.validationComparison.fillTime,
+        coolingTime: App.stl.validationComparison.coolingTime,
+        pressureDrop: App.stl.validationComparison.pressureDrop,
+        maxShrinkage: App.stl.validationComparison.maxShrinkage,
+        warpMagnitude: App.stl.validationComparison.warpMagnitude
+      });
+      if (sampleResult.saved && App.stl.result) {
+        applyCalibrationToResult(App.stl.result);
+        if (App.stl.result.defects) renderDefectPredictionSummary(App.stl.result.defects);
+        if (App.stl.result.diagnostics) updateDiagnosticsPanel(App.stl.result.diagnostics);
+      }
+      renderTrustPanel();
+      refreshMoldflowDashboard();
+      showToast(sampleResult.saved ? `검증값 저장 및 자동 보정 적용 (${sampleResult.count}건)` : '검증값을 신뢰도에 반영했습니다.', 'ok');
+    });
+  }
+  if (resetBtn && resetBtn.dataset.bound !== '1') {
+    resetBtn.dataset.bound = '1';
+    resetBtn.addEventListener('click', () => {
+      clearCalibrationSamples();
+      if (App.stl.result) {
+        restoreCalibrationBase(App.stl.result);
+        App.stl.result.validated = false;
+        App.stl.result.calibration = buildCalibrationModel();
+        if (App.stl.result.defects) renderDefectPredictionSummary(App.stl.result.defects);
+        if (App.stl.result.diagnostics) updateDiagnosticsPanel(App.stl.result.diagnostics);
+      }
+      setEngineBadge(false);
+      renderTrustPanel();
+      refreshMoldflowDashboard();
+      showToast('누적 보정 샘플을 초기화했습니다.', 'info');
+    });
+  }
 }
 
 function applyValidatedMetrics(m) {
@@ -1122,6 +1608,48 @@ function refreshTrustAfterSummary() {
   try { renderTrustPanel(); } catch (e) {}
 }
 
+function renderMeshQualityPanel(quality) {
+  const panel = $('mesh-quality-3d');
+  if (!panel) return;
+  const q = quality || App.stl.result?.meshQuality || App.stl.result?.mesh_quality ||
+    (window.STLAnalyzer && typeof STLAnalyzer.getMeshQuality === 'function' ? STLAnalyzer.getMeshQuality() : null);
+  if (!q) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'flex';
+  const status = String(q.status || 'warning').toLowerCase();
+  const statusText = status === 'pass' ? '메쉬 통과' : status === 'fail' || status === 'error' ? '수정 필요' : '검토 필요';
+  const statusEl = $('mesh-quality-status');
+  if (statusEl) {
+    statusEl.textContent = statusText;
+    statusEl.className = status;
+  }
+  const setText = (id, value) => {
+    const el = $(id);
+    if (el) el.textContent = value;
+  };
+  setText('mesh-quality-score', `${Number.isFinite(Number(q.score)) ? Math.round(Number(q.score)) : '-'} / 100`);
+  setText('mesh-quality-triangles', Number.isFinite(Number(q.triangle_count)) ? Number(q.triangle_count).toLocaleString() : '-');
+  setText('mesh-quality-vertices', Number.isFinite(Number(q.vertex_count)) ? Number(q.vertex_count).toLocaleString() : '-');
+  setText('mesh-quality-watertight', q.watertight === true ? 'OK' : q.watertight === false ? '확인 필요' : '-');
+  setText('mesh-quality-pitch', Number.isFinite(Number(q.voxel_pitch_mm)) ? `${Number(q.voxel_pitch_mm).toFixed(3)} mm` : '로컬 검사');
+  setText('mesh-quality-detail', q.mesh_detail_label || getMeshDetailLabel(q.mesh_detail_preset || q.meshDetailPreset || getMeshDetailPresetName()));
+  setText('mesh-quality-cells', Number.isFinite(Number(q.cells_on_min_dimension)) ? Number(q.cells_on_min_dimension).toFixed(1) : '-');
+  setText('mesh-quality-degenerate', Number.isFinite(Number(q.degenerate_triangles)) ? Number(q.degenerate_triangles).toLocaleString() : '-');
+  setText('mesh-quality-nonmanifold', Number.isFinite(Number(q.nonmanifold_edges)) ? Number(q.nonmanifold_edges).toLocaleString() : '-');
+  const list = $('mesh-quality-actions');
+  if (list) {
+    const items = []
+      .concat(Array.isArray(q.issues) ? q.issues : [])
+      .concat(Array.isArray(q.recommendations) ? q.recommendations : [])
+      .filter(Boolean);
+    list.innerHTML = (items.length ? items.slice(0, 5) : ['메쉬 설정이 해석 가능한 상태입니다. 게이트와 공정 조건을 지정한 뒤 분석을 진행하십시오.'])
+      .map(item => `<li>${escapeHtml(item)}</li>`)
+      .join('');
+  }
+}
+
 async function reRun3DAnalysis() {
   if (!App.stl.parsed) return;
   setStatus('busy', '3D 재분석 중');
@@ -1163,7 +1691,9 @@ async function reRun3DAnalysis() {
       desc: 'STP 파일에서 메타데이터를 추출해 가상 검증을 실행했습니다. 정밀 메쉬 기하 분석이 필요하면 STL로 변환 후 업로드해 주세요.'
     });
   }
+  applyCalibrationToResult(result);
   App.stl.result = result;
+  renderMeshQualityPanel(result.meshQuality || result.mesh_quality);
 
   // 대시보드 자동 갱신(비침습 훅: 로드 실패와 무관하게 안전)
   try { if (window.DimaDashboard) window.DimaDashboard.ingest(result); } catch (e) {}
@@ -1257,9 +1787,13 @@ async function run3DAnalysis() {
     let stlData;
     const buf = await App.stl.file.arrayBuffer();
     if (isSTP) {
-      stlData = await STLAnalyzer.parseSTP(buf);
+      stlData = await STLAnalyzer.parseSTP(buf, getMeshDetailPresetName());
     } else {
       stlData = STLAnalyzer.parseSTL(buf);
+      stlData.metadata = Object.assign({}, stlData.metadata || {}, {
+        meshDetailPreset: getMeshDetailPresetName(),
+        meshDetailLabel: getMeshDetailLabel()
+      });
     }
     App.stl.parsed = stlData;
 
@@ -1428,8 +1962,9 @@ async function run3DAnalysis() {
     App.stl.gateVelocityRatios = [];
 
     STLAnalyzer.setPullAxis(App.stl.pullAxis);
-    STLAnalyzer.loadGeometry(stlData);
-    await STLAnalyzer.updateCoreHelpers(App.stl.showCores);
+  STLAnalyzer.loadGeometry(stlData);
+  renderMeshQualityPanel();
+  await STLAnalyzer.updateCoreHelpers(App.stl.showCores);
     STLAnalyzer.updatePartingLine(App.stl.showParting, 50);
 
     // Analysis
@@ -1448,7 +1983,9 @@ async function run3DAnalysis() {
           : 'STEP 형상을 실제 3D 메쉬로 테셀레이션하여 정밀 분석했습니다. 사출 유동·냉각 해석도 동일 메쉬로 수행됩니다.'
       });
     }
-    App.stl.result = result;
+    applyCalibrationToResult(result);
+  App.stl.result = result;
+  renderMeshQualityPanel(result.meshQuality || result.mesh_quality);
 
     $('results-3d').style.display = 'flex';
     animateScore('score-num-3d', 'ring-fill-3d', 'score-grade-3d', result.score);
@@ -1667,6 +2204,14 @@ $('btn-flow-overlay').addEventListener('click', function() {
   $('legend-warp').style.display = 'none';
   $('flow-controls').style.display = 'flex';
   updateViewerAnalysisChart('flow');
+  // 충전을 켜면 완성된 충진 결과(전체 색상)를 안정적으로 바로 보여준다.
+  // (자동 무한반복 재생은 0으로 뚝 끊겨 보여서 제거 — 재생 버튼으로 충진 과정을 애니메이션)
+  stopFlowAnimation();
+  flowAnimPct = 100;
+  $('flow-slider').value = 100;
+  const _tT = App.stl.fillingTime || 2.0;
+  $('flow-time-display').textContent = `${_tT.toFixed(1)}s / ${_tT.toFixed(1)}s`;
+  STLAnalyzer.setFlowAnimationTime(1.0);
   logToConsole('해석 오버레이 변경: 사출 유동 시뮬레이션(Moldflow)', 'info');
 });
 
@@ -2017,33 +2562,42 @@ function resetFlowAnimation() {
 
 function startFlowAnimation() {
   if (flowPlaying) return;
+  // 끝까지 채워진 상태에서 다시 재생하면 처음(0%)부터 시작.
+  if (flowAnimPct >= 100) flowAnimPct = 0;
   flowPlaying = true;
   $('btn-play-flow').style.display = 'none';
   $('btn-pause-flow').style.display = 'flex';
-  
+
   lastAnimTime = performance.now();
-  
+
   function animLoop(timestamp) {
     if (!flowPlaying) return;
-    
+
     const delta = timestamp - lastAnimTime;
     lastAnimTime = timestamp;
-    
+
     const totalT = App.stl.fillingTime || 2.0;
     flowAnimPct += (delta * (0.1 / totalT)) * flowSpeedMultiplier;
-    if (flowAnimPct > 100) {
-      flowAnimPct = 0;
+
+    // 끝까지 채우면 100%에서 정지(0으로 뚝 끊어 되돌아가지 않음).
+    if (flowAnimPct >= 100) {
+      flowAnimPct = 100;
+      $('flow-slider').value = 100;
+      $('flow-time-display').textContent = `${totalT.toFixed(1)}s / ${totalT.toFixed(1)}s`;
+      STLAnalyzer.setFlowAnimationTime(1.0);
+      stopFlowAnimation();
+      return;
     }
-    
+
     const val = Math.floor(flowAnimPct);
     $('flow-slider').value = val;
     $('flow-time-display').textContent = `${(flowAnimPct * totalT / 100).toFixed(1)}s / ${totalT.toFixed(1)}s`;
     // 정수 % 양자화 제거: 연속 float를 넘겨 유동 전면이 부드럽게(끊김 없이) 전진하도록
     STLAnalyzer.setFlowAnimationTime(flowAnimPct / 100);
-    
+
     flowAnimFrame = requestAnimationFrame(animLoop);
   }
-  
+
   flowAnimFrame = requestAnimationFrame(animLoop);
 }
 
@@ -2506,7 +3060,9 @@ async function updateAnalysisOnPartingChange() {
   updateAnalysisOnPartingChange.running = true;
   try {
     const result = await STLAnalyzer.analyze(App.stl.parsed, App.stl.material);
+    applyCalibrationToResult(result);
     App.stl.result = result;
+    renderMeshQualityPanel(result.meshQuality || result.mesh_quality);
     
     animateScore('score-num-3d', 'ring-fill-3d', 'score-grade-3d', result.score);
     renderMoldFeatures(result.moldFeatures);
@@ -2763,6 +3319,7 @@ function buildReport() {
       <div class="report-stat"><span class="stat-label">설정 탈형 축</span><span class="stat-value">${App.stl.pullAxis || '-'} 축</span></div>
       <div class="report-stat"><span class="stat-label">적용 소재</span><span class="stat-value">${r?.stats?.material || '-'}</span></div>
       <div class="report-stat"><span class="stat-label">삼각 면 수</span><span class="stat-value">${r?.stats?.triCount ? r.stats.triCount.toLocaleString() : '-'}개</span></div>
+      <div class="report-stat"><span class="stat-label">메쉬 설정 검증</span><span class="stat-value">${(r.meshQuality || r.mesh_quality) ? `${escapeHtml((r.meshQuality || r.mesh_quality).status || '-')} · ${(r.meshQuality || r.mesh_quality).score ?? '-'} / 100 · ${(r.meshQuality || r.mesh_quality).watertight === true ? 'Watertight OK' : 'Watertight 확인 필요'}` : '-'}</span></div>
       <div class="report-stat"><span class="stat-label">언더컷 비율</span><span class="stat-value" style="color:#ff4d6d">${r?.stats?.undercutPct !== undefined ? r.stats.undercutPct.toFixed(1) : '-'}%</span></div>
       <div class="report-stat report-shrink-sink"><span class="stat-label">수축 위험도 (Shrinkage Risk)</span><span class="stat-value" style="color:${shrinkSinkColor}">${shrinkSinkLevel} (후보: ${sinkRisk.count ?? 0}개, 최대 수축: ${shrinkRisk.maxShrinkage !== undefined ? shrinkRisk.maxShrinkage.toFixed(2) : '-'}%, 평균: ${shrinkRisk.avgShrinkage !== undefined ? shrinkRisk.avgShrinkage.toFixed(2) : '-'}%)</span></div>
       <div class="report-stat"><span class="stat-label">변형 위험도 (Warpage Risk)</span><span class="stat-value" style="color:${r?.defects?.warpage?.risk === 'HIGH' ? '#ff4d6d' : r?.defects?.warpage?.risk === 'MEDIUM' ? '#ffd166' : '#00ffa3'}">${r?.defects?.warpage?.risk || '-'} (점수: ${r?.defects?.warpage?.score ?? '-'}점, 방향: ${r?.defects?.warpage?.direction || '-'})</span></div>
@@ -2795,6 +3352,10 @@ function buildReport() {
       <div class="report-stat"><span class="stat-label">종합 신뢰도</span><span class="stat-value">${trust.overall}%</span></div>
       <div class="report-stat"><span class="stat-label">입력 데이터 품질</span><span class="stat-value">${trust.inputQuality}%</span></div>
       <div class="report-stat"><span class="stat-label">해석 등급</span><span class="stat-value">${trust.grade}</span></div>
+      <div class="report-stat"><span class="stat-label">항목별 신뢰도</span><span class="stat-value">충전 ${trust.category.fill}% / 수축 ${trust.category.shrink}% / 냉각 ${trust.category.cooling}% / 변형 ${trust.category.warpage}% / 금형성 ${trust.category.tooling}%</span></div>
+      <div class="report-stat"><span class="stat-label">불확실성 폭</span><span class="stat-value">충전 ±${trust.uncertainty.fill}% / 수축 ±${trust.uncertainty.shrink}% / 냉각 ±${trust.uncertainty.cooling}% / 변형 ±${trust.uncertainty.warpage}%</span></div>
+      <div class="report-stat"><span class="stat-label">비교 검증</span><span class="stat-value">${trust.validation.hasValidation ? 'Moldflow/시사출 비교값 반영됨' : '비교값 미입력'}</span></div>
+      <div class="report-stat"><span class="stat-label">논문 기반 보정</span><span class="stat-value">${trust.paperBasis.slice(0, 2).join('<br>')}</span></div>
       <div class="report-stat"><span class="stat-label">주요 근거</span><span class="stat-value">${trust.evidence.slice(0, 3).join('<br>')}</span></div>
       <div class="report-stat"><span class="stat-label">한계</span><span class="stat-value">${trust.limits.slice(0, 3).join('<br>')}</span></div>
     </div>`;
@@ -2823,6 +3384,68 @@ function buildReport() {
     else if (card) card.appendChild(row);
     oldRows.forEach(function (oldRow) { oldRow.remove(); });
   }
+}
+
+// 발표/보고서용 3D 중심 리포트. 위의 레거시 리포트 함수를 실행 시점에서 덮어쓴다.
+function buildReport() {
+  const body = $('report-body');
+  const r = App.stl.result;
+  if (!r) {
+    body.innerHTML = `<div class="report-empty"><div style="font-size:3rem">보고서</div><p>3D 모델 분석을 완료하면 리포트가 생성됩니다.</p></div>`;
+    return;
+  }
+
+  const fileName = App.stl.file?.name || '';
+  const isSTP = fileName.toLowerCase().endsWith('.stp') || fileName.toLowerCase().endsWith('.step');
+  const sinkRisk = r?.defects?.sink || {};
+  const shrinkRisk = r?.defects?.shrinkage || {};
+  const warpRisk = r?.defects?.warpage || {};
+  const trust = computeTrustModel();
+  const calibration = trust.calibration || buildCalibrationModel();
+  const meshQuality = r.meshQuality || r.mesh_quality || (window.STLAnalyzer && typeof STLAnalyzer.getMeshQuality === 'function' ? STLAnalyzer.getMeshQuality() : null);
+  const shrinkLevel = sinkRisk.severity === 'HIGH' || shrinkRisk.riskLevel === 'HIGH' ? 'HIGH' : sinkRisk.severity === 'MEDIUM' || shrinkRisk.riskLevel === 'MEDIUM' ? 'MEDIUM' : 'LOW';
+  const shrinkColor = shrinkLevel === 'HIGH' ? '#ff4d6d' : shrinkLevel === 'MEDIUM' ? '#ffd166' : '#00ffa3';
+  const warpColor = warpRisk.risk === 'HIGH' ? '#ff4d6d' : warpRisk.risk === 'MEDIUM' ? '#ffd166' : '#00ffa3';
+  const factorText = [
+    `충전 ${safeDisplay(calibration.factors.fillTime, 2)}x`,
+    `냉각 ${safeDisplay(calibration.factors.coolingTime, 2)}x`,
+    `압력 ${safeDisplay(calibration.factors.pressureDrop, 2)}x`,
+    `수축 ${safeDisplay(calibration.factors.maxShrinkage, 2)}x`,
+    `변형 ${safeDisplay(calibration.factors.warpMagnitude, 2)}x`
+  ].join(' / ');
+
+  body.innerHTML = `
+    <div class="report-grid">
+      <div class="report-card">
+        <h3>3D 사출성형 분석 결과 ${isSTP ? '(STEP 분석)' : ''}</h3>
+        <div class="report-stat"><span class="stat-label">파일명</span><span class="stat-value">${escapeHtml(fileName || '-')}</span></div>
+        <div class="report-stat"><span class="stat-label">양산성 점수</span><span class="stat-value">${r?.score ?? '-'} / 100</span></div>
+        <div class="report-stat"><span class="stat-label">소재 / 성형 축</span><span class="stat-value">${escapeHtml(r?.stats?.material || App.stl.material || '-')} / ${escapeHtml(App.stl.pullAxis || '-')}축</span></div>
+        <div class="report-stat"><span class="stat-label">메쉬 해상도</span><span class="stat-value">${r?.stats?.triCount ? r.stats.triCount.toLocaleString() : '-'} 면</span></div>
+        <div class="report-stat"><span class="stat-label">메쉬 설정 검증</span><span class="stat-value">${meshQuality ? `${escapeHtml(meshQuality.status || '-')} · ${meshQuality.score ?? '-'} / 100 · ${meshQuality.watertight === true ? 'Watertight OK' : 'Watertight 확인 필요'}` : '-'}</span></div>
+        <div class="report-stat"><span class="stat-label">언더컷 비율</span><span class="stat-value" style="color:#ff4d6d">${r?.stats?.undercutPct !== undefined ? r.stats.undercutPct.toFixed(1) : '-'}%</span></div>
+        <div class="report-stat report-shrink-sink"><span class="stat-label">수축 위험도</span><span class="stat-value" style="color:${shrinkColor}">${shrinkLevel} (후보 ${sinkRisk.count ?? 0}개, 최대 ${shrinkRisk.maxShrinkage !== undefined ? shrinkRisk.maxShrinkage.toFixed(2) : '-'}%, 평균 ${shrinkRisk.avgShrinkage !== undefined ? shrinkRisk.avgShrinkage.toFixed(2) : '-'}%)</span></div>
+        <div class="report-stat"><span class="stat-label">변형 위험도</span><span class="stat-value" style="color:${warpColor}">${warpRisk.risk || '-'} (점수 ${warpRisk.score ?? '-'}, 방향 ${warpRisk.direction || '-'}, 변형량 ${warpRisk.magnitude !== undefined ? warpRisk.magnitude.toFixed(2) : '-'}mm)</span></div>
+        ${r?.diagnostics ? `
+        <div class="report-stat" style="border-top:1px dashed #3d4b66; margin-top:8px; padding-top:8px;"><span class="stat-label">공정 조건</span><span class="stat-value">수지 ${r.diagnostics.meltTemp ?? '-'}°C / 금형 ${r.diagnostics.moldTemp ?? '-'}°C / 속도 ${r.diagnostics.flowRate ?? '-'} cm³/s</span></div>
+        <div class="report-stat"><span class="stat-label">충전 / 냉각</span><span class="stat-value">${r.diagnostics.fillingTime !== undefined ? r.diagnostics.fillingTime.toFixed(2) : '-'}s / ${r.diagnostics.maxCoolingTime !== undefined ? r.diagnostics.maxCoolingTime.toFixed(1) : '-'}s</span></div>
+        <div class="report-stat"><span class="stat-label">압력강하 / 형체력</span><span class="stat-value">${r.diagnostics.estimatedPressureDrop !== undefined ? r.diagnostics.estimatedPressureDrop.toFixed(1) : '-'} MPa / ${r.diagnostics.clampingForce !== undefined ? r.diagnostics.clampingForce.toFixed(1) : '-'} Tons</span></div>
+        ` : ''}
+      </div>
+
+      <div class="report-card">
+        <h3>신뢰도 및 검증 상태</h3>
+        <div class="report-stat"><span class="stat-label">종합 신뢰도</span><span class="stat-value">${trust.overall}% · ${escapeHtml(trust.grade)}</span></div>
+        <div class="report-stat"><span class="stat-label">입력 데이터 품질</span><span class="stat-value">${trust.inputQuality}%</span></div>
+        <div class="report-stat"><span class="stat-label">항목별 신뢰도</span><span class="stat-value">충전 ${trust.category.fill}% / 수축 ${trust.category.shrink}% / 냉각 ${trust.category.cooling}% / 변형 ${trust.category.warpage}% / 금형성 ${trust.category.tooling}%</span></div>
+        <div class="report-stat"><span class="stat-label">불확실성 폭</span><span class="stat-value">충전 ±${trust.uncertainty.fill}% / 수축 ±${trust.uncertainty.shrink}% / 냉각 ±${trust.uncertainty.cooling}% / 변형 ±${trust.uncertainty.warpage}%</span></div>
+        <div class="report-stat"><span class="stat-label">누적 보정</span><span class="stat-value">샘플 ${calibration.count}건 · 보정 신뢰도 ${calibration.confidence}% · 적용 항목 ${calibration.usableMetricCount}개</span></div>
+        <div class="report-stat"><span class="stat-label">보정계수</span><span class="stat-value">${factorText}</span></div>
+        <div class="report-stat"><span class="stat-label">비교 검증</span><span class="stat-value">${trust.validation.hasValidation ? 'Moldflow/시사출 비교값 반영됨' : '비교값 미입력'}</span></div>
+        <div class="report-stat"><span class="stat-label">주요 근거</span><span class="stat-value">${trust.evidence.slice(0, 4).map(escapeHtml).join('<br>')}</span></div>
+        <div class="report-stat"><span class="stat-label">다음 검증 액션</span><span class="stat-value">${(trust.actions.length ? trust.actions : trust.limits).slice(0, 4).map(escapeHtml).join('<br>')}</span></div>
+      </div>
+    </div>`;
 }
 
 $('btn-export').addEventListener('click', () => {

@@ -5,7 +5,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from voxelizer import voxelize_mesh
 from solver import solve_injection_flow
-from cooling_solver import solve_mold_cooling, calculate_warpage_and_sink
+from cooling_core import solve_mold_cooling, calculate_warpage_and_sink
 
 app = Flask(__name__)
 CORS(app) # Enable CORS for frontend cross-origin requests

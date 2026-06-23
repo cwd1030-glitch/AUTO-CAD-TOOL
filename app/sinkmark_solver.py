@@ -5,7 +5,7 @@ import numpy as np
 # Add python_backend to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'python_backend'))
 
-from cooling_solver import calculate_warpage_and_sink
+from cooling_core import calculate_warpage_and_sink
 import flow_solver
 
 def _map_risk_to_vertices(mesh, voxel_grid, metadata, sink_risk):

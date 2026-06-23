@@ -33,7 +33,7 @@ def aggregate_defect_metrics(voxel_grid, T_final, solidification_time,
     """
     if displacement is None or sink_risk is None:
         # 지연 임포트(순환 방지)
-        from cooling_solver import calculate_warpage_and_sink
+        from cooling_core import calculate_warpage_and_sink
         displacement, sink_risk = calculate_warpage_and_sink(
             voxel_grid, T_final, solidification_time, parting_axis=parting_axis)
 

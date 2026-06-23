@@ -20,6 +20,8 @@ class DimaTrayApp : ApplicationContext {
     static HttpListener _listener;
     static string       _baseDir;
     static int          _port;
+    static int          _flaskPort;
+    static int          _pythonAvail = -1;
     static Mutex        _mutex;
     static Process      _pyProcess;
     NotifyIcon          _tray;
@@ -102,21 +104,40 @@ class DimaTrayApp : ApplicationContext {
 
             new Thread(ServeLoop) { IsBackground = true, Name = "DIMA-HTTP" }.Start();
 
-            // Start Python Server in background
+            // Start background Flask server (AI review + validated metrics).
+            // Prefer the bundled server.exe (no Python needed); fall back to `python server.py`.
+            // Bind it to a free private port; the frontend reaches it only via the /api/* proxy below.
             try {
-                string pyScript = Path.Combine(_baseDir, "server.py");
-                if (!File.Exists(pyScript)) {
-                    pyScript = Path.Combine(_baseDir, "backend", "server.py");
-                }
-                if (File.Exists(pyScript)) {
-                    var pyStart = new ProcessStartInfo {
-                        FileName = "python",
-                        Arguments = "\"" + pyScript + "\"",
+                _flaskPort = FindFreePort(_port + 1);
+                ProcessStartInfo flaskStart = null;
+
+                string bundledServer = Path.Combine(_baseDir, "server.exe");
+                if (File.Exists(bundledServer)) {
+                    flaskStart = new ProcessStartInfo {
+                        FileName = bundledServer,
                         WorkingDirectory = _baseDir,
                         UseShellExecute = false,
                         CreateNoWindow = true
                     };
-                    _pyProcess = Process.Start(pyStart);
+                } else {
+                    string pyScript = Path.Combine(_baseDir, "server.py");
+                    if (!File.Exists(pyScript)) {
+                        pyScript = Path.Combine(_baseDir, "backend", "server.py");
+                    }
+                    if (File.Exists(pyScript) && PythonAvailable()) {
+                        flaskStart = new ProcessStartInfo {
+                            FileName = "python",
+                            Arguments = "\"" + pyScript + "\"",
+                            WorkingDirectory = _baseDir,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
+                    }
+                }
+
+                if (flaskStart != null) {
+                    flaskStart.EnvironmentVariables["DIMA_FLASK_PORT"] = _flaskPort.ToString();
+                    _pyProcess = Process.Start(flaskStart);
                 }
             } catch { }
 
@@ -278,6 +299,76 @@ class DimaTrayApp : ApplicationContext {
         return start;
     }
 
+    // 시스템 PATH 의 python 이 실제 인터프리터인지 확인(캐시). MS Store 스텁은
+    // "Python 3" 을 출력하지 않으므로 사용 불가로 판정 → 번들 exe 폴백 경로에서만 의미.
+    static bool PythonAvailable() {
+        if (_pythonAvail >= 0) return _pythonAvail == 1;
+        try {
+            var psi = new ProcessStartInfo {
+                FileName = "python", Arguments = "--version",
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            using (var p = Process.Start(psi)) {
+                string o = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+                p.WaitForExit(4000);
+                _pythonAvail = (o.IndexOf("Python 3", StringComparison.OrdinalIgnoreCase) >= 0) ? 1 : 0;
+            }
+        } catch { _pythonAvail = 0; }
+        return _pythonAvail == 1;
+    }
+
+    static void WriteJsonError(HttpListenerContext ctx, int code, string json) {
+        byte[] b = System.Text.Encoding.UTF8.GetBytes(json);
+        ctx.Response.StatusCode = code;
+        ctx.Response.ContentType = "application/json; charset=utf-8";
+        ctx.Response.ContentLength64 = b.Length;
+        ctx.Response.OutputStream.Write(b, 0, b.Length);
+    }
+
+    // /api/* 요청을 로컬 Flask(server.exe) 로 그대로 중계한다.
+    static void ProxyApiToFlask(HttpListenerContext ctx, string urlPath) {
+        try {
+            if (_flaskPort <= 0) {
+                WriteJsonError(ctx, 503, "{\"status\":\"error\",\"code\":\"NO_BACKEND\",\"message\":\"AI/검증 백엔드를 사용할 수 없습니다. (server.exe 누락 또는 기동 실패)\"}");
+                return;
+            }
+            string query  = ctx.Request.Url.Query; // 선행 '?' 포함
+            string target = "http://127.0.0.1:" + _flaskPort + urlPath + query;
+
+            var req = (HttpWebRequest)WebRequest.Create(target);
+            req.Method  = ctx.Request.HttpMethod;
+            req.Timeout = 300000; // AI 호출은 길어질 수 있음
+            if (!string.IsNullOrEmpty(ctx.Request.ContentType)) req.ContentType = ctx.Request.ContentType;
+
+            if (ctx.Request.HasEntityBody) {
+                using (var reqStream = req.GetRequestStream())
+                using (var inStream  = ctx.Request.InputStream) {
+                    inStream.CopyTo(reqStream);
+                }
+            }
+
+            HttpWebResponse resp;
+            try { resp = (HttpWebResponse)req.GetResponse(); }
+            catch (WebException wex) {
+                resp = wex.Response as HttpWebResponse;
+                if (resp == null) {
+                    WriteJsonError(ctx, 502, "{\"status\":\"error\",\"code\":\"BACKEND_ERROR\",\"message\":\"백엔드 응답 없음\"}");
+                    return;
+                }
+            }
+            using (resp) {
+                ctx.Response.StatusCode = (int)resp.StatusCode;
+                if (!string.IsNullOrEmpty(resp.ContentType)) ctx.Response.ContentType = resp.ContentType;
+                using (var respStream = resp.GetResponseStream()) {
+                    respStream.CopyTo(ctx.Response.OutputStream);
+                }
+            }
+        } catch (Exception ex) {
+            try { WriteJsonError(ctx, 502, "{\"status\":\"error\",\"code\":\"BACKEND_ERROR\",\"message\":\"백엔드 통신 오류: " + ex.Message.Replace("\"", "'").Replace("\\", "/") + "\"}"); } catch { }
+        }
+    }
+
     static void ServeLoop() {
         while (_listener.IsListening) {
             HttpListenerContext ctx;
@@ -368,18 +459,42 @@ class DimaTrayApp : ApplicationContext {
                     File.WriteAllBytes(tempStl, stlBytes);
                     File.WriteAllText(tempGates, gatesJson);
 
-                    // Execute solve_cli.py
+                    // 솔버 런타임 결정: 번들 solve_cli.exe 우선 → python solve_cli.py 폴백.
+                    string argsTail = "--stl \"" + tempStl + "\" --gates_file \"" + tempGates
+                        + "\" --resolution " + resolution.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + " --cooling_enabled " + coolingEnabled
+                        + " --coolant_temp " + coolantTemp + " --melt_temp " + meltTemp;
+
                     string pythonBackendDir = Path.Combine(_baseDir, "python_backend");
-                    string solveCliScript = Path.Combine(pythonBackendDir, "solve_cli.py");
-                    
+                    string bundledSolver    = Path.Combine(pythonBackendDir, "solve_cli.exe");
+                    string solveCliScript   = Path.Combine(pythonBackendDir, "solve_cli.py");
+
                     var startInfo = new ProcessStartInfo {
-                        FileName = "python",
-                        Arguments = "\"" + solveCliScript + "\" --stl \"" + tempStl + "\" --gates_file \"" + tempGates + "\" --resolution " + resolution.ToString(System.Globalization.CultureInfo.InvariantCulture) + " --cooling_enabled " + coolingEnabled + " --coolant_temp " + coolantTemp + " --melt_temp " + meltTemp,
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true
                     };
+
+                    if (File.Exists(bundledSolver)) {
+                        startInfo.FileName  = bundledSolver;
+                        startInfo.Arguments = argsTail;
+                    } else if (File.Exists(solveCliScript) && PythonAvailable()) {
+                        startInfo.FileName  = "python";
+                        startInfo.Arguments = "\"" + solveCliScript + "\" " + argsTail;
+                    } else {
+                        // 번들 exe도 Python도 없음 — 조용한 500 대신 구조화된 에러로 명확히 알린다.
+                        try { File.Delete(tempStl); } catch {}
+                        try { File.Delete(tempGates); } catch {}
+                        string noRt = "{\"status\":\"error\",\"code\":\"NO_RUNTIME\",\"message\":\"분석 엔진(solve_cli.exe)을 찾을 수 없습니다. 설치 파일이 손상되었을 수 있으니 DIMA를 다시 설치해 주세요.\"}";
+                        byte[] nb = System.Text.Encoding.UTF8.GetBytes(noRt);
+                        ctx.Response.StatusCode = 200;
+                        ctx.Response.ContentType = "application/json; charset=utf-8";
+                        ctx.Response.ContentLength64 = nb.Length;
+                        ctx.Response.OutputStream.Write(nb, 0, nb.Length);
+                        ctx.Response.Close();
+                        return;
+                    }
 
                     using (var proc = Process.Start(startInfo)) {
                         string stdout = proc.StandardOutput.ReadToEnd();
@@ -426,6 +541,13 @@ class DimaTrayApp : ApplicationContext {
                 ctx.Response.ContentLength64 = respBytes.Length;
                 ctx.Response.OutputStream.Write(respBytes, 0, respBytes.Length);
                 ctx.Response.Close();
+                return;
+            }
+
+            // /api/* → 백그라운드 Flask(server.exe) 로 리버스 프록시.
+            // 프런트엔드는 단일 오리진(8899)만 사용하므로 포트 하드코딩/CORS/COEP 문제가 사라진다.
+            if (urlPath.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)) {
+                ProxyApiToFlask(ctx, urlPath);
                 return;
             }
 

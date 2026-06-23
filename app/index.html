@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DIMA - 3D 사출물 검증기</title>
   <meta name="description" content="AI 기반 3D 사출물 검증 및 제조성 분석 프로그램" />
-  <link rel="stylesheet" href="css/style.css?v=12" />
-  <link rel="stylesheet" href="css/dima-moldflow.css?v=7" />
+  <link rel="stylesheet" href="css/style.css?v=13" />
+  <link rel="stylesheet" href="css/dima-moldflow.css?v=12" />
 </head>
 <body>
 
@@ -158,6 +158,14 @@
                     <button class="runner-btn" data-runner="hot" id="btn-runner-hot">핫 러너</button>
                   </div>
                 </div>
+                <div class="mesh-detail-control">
+                  <span>메쉬 정밀도</span>
+                  <div class="mesh-detail-options">
+                    <button class="mesh-detail-btn" data-mesh-detail="fast" type="button">빠름</button>
+                    <button class="mesh-detail-btn" data-mesh-detail="fine" type="button">정밀</button>
+                    <button class="mesh-detail-btn active" data-mesh-detail="ultra" type="button">초정밀</button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -270,6 +278,27 @@
               <div><div style="font-size:0.72rem; color:#a0a5b5; margin-bottom:2px;">종합 양산성 점수</div><div style="display:flex; align-items:baseline; gap:4px;"><span id="score-num-3d" style="font-size:1.6rem; font-weight:bold; color:var(--cyan);">--</span><span style="font-size:0.8rem; color:#a0a5b5;">/ 100</span></div></div>
               <div class="score-grade" id="score-grade-3d" style="font-size:0.8rem; font-weight:bold; padding:6px 12px; border-radius:4px; min-width:90px; text-align:center;">--</div>
             </div>
+            <div class="mold-features mesh-quality-panel" id="mesh-quality-3d" style="display:none">
+              <div class="mesh-quality-head">
+                <b>메쉬 설정 검증</b>
+                <span id="mesh-quality-status">-</span>
+              </div>
+              <div class="mesh-quality-score">
+                <span>메쉬 점수</span>
+                <strong id="mesh-quality-score">-</strong>
+              </div>
+              <div class="mesh-quality-grid">
+                <div>삼각형 수: <span id="mesh-quality-triangles">-</span></div>
+                <div>정점 수: <span id="mesh-quality-vertices">-</span></div>
+                <div>Watertight: <span id="mesh-quality-watertight">-</span></div>
+                <div>복셀 Pitch: <span id="mesh-quality-pitch">-</span></div>
+                <div>정밀도: <span id="mesh-quality-detail">-</span></div>
+                <div>최소치수 셀: <span id="mesh-quality-cells">-</span></div>
+                <div>비정상 삼각형: <span id="mesh-quality-degenerate">-</span></div>
+                <div>Non-manifold: <span id="mesh-quality-nonmanifold">-</span></div>
+              </div>
+              <ul id="mesh-quality-actions"><li>모델을 업로드하면 메쉬 설정 상태가 표시됩니다.</li></ul>
+            </div>
             <div id="analysis-disclaimer" style="font-size:0.68rem; color:#8a90a2; line-height:1.5; border:1px solid rgba(255,209,102,0.25); background:rgba(255,209,102,0.05); border-radius:6px; padding:8px 10px; margin-bottom:4px;">
               ⓘ 본 결과는 형상 기반 <b style="color:#ffd166;">설계 초기 참고용 추정치</b>입니다. 실제 사출 트라이얼이나 정밀 CAE(Moldflow 등) 해석을 대체하지 않으며, 양산 판단 전 검증을 권장합니다.
             </div>
@@ -282,6 +311,28 @@
               <div class="trust-meter"><i id="trust-meter-fill"></i></div>
               <div>입력 데이터 품질: <span id="trust-input-quality">-</span></div>
               <div>해석 등급: <span id="trust-analysis-grade">-</span></div>
+              <div class="trust-section-title">항목별 신뢰도</div>
+              <div class="trust-category-grid" id="trust-category-grid"></div>
+              <div class="trust-uncertainty-box" id="trust-uncertainty-box"></div>
+              <div class="trust-section-title">Moldflow / 시사출 검증값</div>
+              <div class="trust-validation-grid">
+                <label>충전시간(s)<input id="trust-mf-fill" type="number" step="0.01" placeholder="Moldflow"></label>
+                <label>냉각시간(s)<input id="trust-mf-cool" type="number" step="0.1" placeholder="Moldflow"></label>
+                <label>압력강하(MPa)<input id="trust-mf-pressure" type="number" step="0.1" placeholder="Moldflow"></label>
+                <label>최대 수축률(%)<input id="trust-mf-shrink" type="number" step="0.01" placeholder="실측/Moldflow"></label>
+                <label>최대 변형량(mm)<input id="trust-mf-warp-mm" type="number" step="0.01" placeholder="실측/Moldflow"></label>
+                <label>변형방향 일치<select id="trust-mf-warp"><option value="">미입력</option><option value="yes">일치</option><option value="no">불일치</option></select></label>
+                <label>시사출 결과<select id="trust-trial-result"><option value="">미입력</option><option value="pass">양품</option><option value="fail">불량</option></select></label>
+              </div>
+              <div class="trust-action-row">
+                <button class="trust-apply-btn" id="trust-apply-validation" type="button">검증값 적용</button>
+                <button class="trust-reset-btn" id="trust-reset-calibration" type="button">보정 초기화</button>
+              </div>
+              <div class="trust-calibration-status" id="trust-calibration-status">보정 샘플 0건</div>
+              <div class="trust-section-title">논문 기반 보정</div>
+              <ul id="trust-paper-basis-list"><li>-</li></ul>
+              <div class="trust-section-title">신뢰도 향상 액션</div>
+              <ul id="trust-action-list"><li>-</li></ul>
               <div class="trust-section-title">판단 근거</div>
               <ul id="trust-evidence-list"><li>-</li></ul>
               <div class="trust-section-title">한계 / 검증 필요</div>
@@ -304,7 +355,7 @@
             </div>
             <div class="mold-features" id="weld-info-3d" style="display:none"><b>웰드라인 예측</b><div>총 개수: <span id="weld-count">-</span></div><div>고위험: <span id="weld-high-risk">-</span></div><div>위험 점수: <span id="weld-severity-score">-</span></div></div>
             <div class="mold-features" id="airtrap-info-3d" style="display:none"><b>에어트랩 예측</b><div>총 개수: <span id="airtrap-count">-</span></div><div>고위험: <span id="airtrap-high-risk">-</span></div><div>위험 점수: <span id="airtrap-severity-score">-</span></div></div>
-            <div class="mold-features" id="defect-summary-card-3d" style="display:none"><b>결함 예측 요약</b> <span id="engine-badge" style="font-size:0.62rem; padding:1px 7px; border:1px solid rgba(255,209,102,0.4); border-radius:10px; color:#ffd166; vertical-align:middle;">간이 추정 · 형상 기반</span><span id="defect-confidence-score">신뢰도: -%</span><div hidden><span id="defect-sink-risk">-</span></div><div>수축: <span id="defect-shrink-risk">-</span></div><div>변형: <span id="defect-warp-risk">-</span></div><div>집중 영역: <span id="defect-critical-areas">-</span></div><ul id="defect-reco-actions"><li>-</li></ul></div>
+            <div class="mold-features" id="defect-summary-card-3d" style="display:none"><b>결함 예측 요약</b> <span id="engine-badge" style="font-size:0.62rem; padding:1px 7px; border:1px solid rgba(255,209,102,0.4); border-radius:10px; color:#ffd166; vertical-align:middle;">형상 기반 예측 · 검증값 필요</span><span id="defect-confidence-score">신뢰도: -%</span><div hidden><span id="defect-sink-risk">-</span></div><div>수축: <span id="defect-shrink-risk">-</span></div><div>변형: <span id="defect-warp-risk">-</span></div><div>집중 영역: <span id="defect-critical-areas">-</span></div><ul id="defect-reco-actions"><li>-</li></ul></div>
             <div class="mold-features" id="recommendation-info-3d" style="display:none"><b>최적 성형 방향 추천</b><div>방향: <span id="reco-direction">-</span></div><div>신뢰도: <span id="reco-confidence">- %</span></div><div>금형 복잡도: <span id="reco-complexity">-</span></div><div>투영 면적: <span id="reco-proj-area">-</span></div><div>언더컷 면적: <span id="reco-undercut-area">-</span></div><div>슬라이드: <span id="reco-slides">-</span></div><div>리프터: <span id="reco-lifters">-</span></div></div>
             <div class="mold-features" id="gate-info-3d" style="display:none"><b>게이트 설정 정보</b><div>좌표: <span id="gate-coords">X: -, Y: -, Z: -</span></div><div>유동 상태: <span id="gate-flow-status">최대 유동 거리: -</span></div></div>
             <div class="mold-features" id="diagnostics-info-3d" style="display:none"><b>사출성형 물리 진단</b><div>압력 강하: <span id="diag-pressure">- MPa</span></div><div>충전 시간: <span id="diag-fill-time">- s</span></div><div>게이트 유속: <span id="diag-gate-velocity">- m/s</span></div><div>형체력: <span id="diag-clamp">- Tons</span></div><div>냉각 시간: <span id="diag-cooling">- s</span></div><div>게이트 크기: <span id="diag-gate-size">- mm</span></div><div>투영 면적: <span id="diag-proj-area">-</span></div><div>상대 점도: <span id="diag-viscosity">-</span></div></div>
@@ -378,8 +429,8 @@
   <script src="libs/OrbitControls.js"></script>
   <script src="libs/STLLoader.js"></script>
   <script src="js/dxf-analyzer.js?v=10"></script>
-  <script src="js/stl-analyzer.js?v=15"></script>
-  <script src="js/main.js?v=19"></script>
+  <script src="js/stl-analyzer.js?v=19"></script>
+  <script src="js/main.js?v=26"></script>
   <script src="js/app.js"></script>
   <script src="js/ai-dashboard.js?v=11"></script>
   <script src="js/dashboard.js?v=10"></script>

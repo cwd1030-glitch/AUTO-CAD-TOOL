@@ -262,6 +262,93 @@ body {
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
+.mesh-quality-panel {
+  margin-top: 8px;
+  border-color: rgba(0, 212, 255, 0.18);
+  background: rgba(8, 16, 28, 0.42);
+}
+.mesh-quality-head,
+.mesh-quality-score {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mesh-quality-head span {
+  font-size: 0.66rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.mesh-quality-head span.pass {
+  color: #00ffa3;
+  border-color: rgba(0, 255, 163, 0.35);
+  background: rgba(0, 255, 163, 0.08);
+}
+.mesh-quality-head span.warning {
+  color: #ffd166;
+  border-color: rgba(255, 209, 102, 0.35);
+  background: rgba(255, 209, 102, 0.08);
+}
+.mesh-quality-head span.fail,
+.mesh-quality-head span.error {
+  color: #ff4d6d;
+  border-color: rgba(255, 77, 109, 0.35);
+  background: rgba(255, 77, 109, 0.08);
+}
+.mesh-quality-score strong {
+  color: var(--cyan);
+  font-size: 1.1rem;
+}
+.mesh-quality-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 10px;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+.mesh-quality-grid span {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+.mesh-quality-panel ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  color: #b7c2d4;
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+.mesh-detail-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.mesh-detail-control > span {
+  color: var(--cyan);
+  font-size: 0.74rem;
+}
+.mesh-detail-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.mesh-detail-btn {
+  min-height: 28px;
+  border: 1px solid rgba(0, 212, 255, 0.24);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mesh-detail-btn.active {
+  background: rgba(0, 212, 255, 0.16);
+  border-color: rgba(0, 212, 255, 0.58);
+  color: #ffffff;
+}
 .feature-card {
   display: flex;
   justify-content: space-between;
@@ -1483,6 +1570,25 @@ button:focus-visible,input:focus-visible,select:focus-visible{ outline:none; box
   background: rgba(14,165,233,0.16);
   border-color: rgba(14,165,233,0.72);
   color: #7dd3fc;
+}
+
+/* 라이트(화이트) 모드: 선택 상태가 흰 배경에서 묻혀 안 보이던 문제 수정.
+   솔리드 블루 + 흰 글자 + 외곽 링으로 선택 여부를 분명하게 표시. */
+body[data-theme="white"] #content-3d .mat-btn.active,
+body[data-theme="white"] #content-3d .axis-btn.active,
+body[data-theme="white"] #content-3d .runner-btn.active {
+  background: #0ea5e9 !important;
+  border-color: #0284c7 !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  box-shadow: 0 0 0 2px rgba(14,165,233,0.28);
+}
+
+/* 라이트 모드: 상단 툴바(솔리드/충전/게이트 등) 선택도 또렷하게 */
+body[data-theme="white"] #content-3d #toolbar-3d .tool-btn.active {
+  background: #0ea5e9 !important;
+  color: #ffffff !important;
+  font-weight: 700;
 }
 
 body:has(#content-3d.active) #dima-dash-toggle {

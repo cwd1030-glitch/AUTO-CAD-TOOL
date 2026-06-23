@@ -74,8 +74,8 @@ async function autoRunPythonSimulation() {
 
     try {
         console.log("[AutoSimulation] Triggering background Python analysis...", currentParams);
-        // 백그라운드에서 돌고 있는 파이썬 서버로 자동 요청
-        const response = await fetch('http://127.0.0.1:5000/api/analyze', {
+        // 백그라운드 파이썬 서버로 자동 요청 (DIMA.exe가 /api/* 를 Flask로 프록시 — 단일 오리진)
+        const response = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(currentParams)

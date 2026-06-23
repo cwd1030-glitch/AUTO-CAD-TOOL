@@ -127,3 +127,58 @@ python -m pytest test_solvers.py -v
 ## 부록 — 검증 환경
 
 numpy 2.2.6 / scipy 1.15.3 / trimesh 4.12.2, Python 3.10. 솔버 로직을 격리 실행해 18 테스트 전부 통과 확인.
+
+---
+
+# 부록 B — 신뢰성 강화 2차 (2026-06-21)
+
+"믿을 수 있는 프로그램"을 목표로 안정성·정확도·회귀방지·구조를 일괄 보강했다. 모두 실제 빌드/실행으로 검증 완료.
+
+## B-1. 🔴 Python 런타임 의존성 제거 (안정성)
+
+**문제:** `DIMA.exe`(C# 런처)가 솔버/Flask를 시스템 PATH의 `python`으로 직접 호출 → Python 미설치/미구성 PC에서
+**분석 전체가 조용히 500으로 실패**. PyInstaller spec은 있었으나 런처에 연결되지 않았다.
+
+**조치:**
+- `development/build-python.ps1` 신규 — `solve_cli.exe`(운영 솔버, 89.9MB) + `server.exe`(Flask, 115MB) 번들 빌드. 빌드 전 pytest 게이트.
+- C# 런처(`compile_exe.ps1`)가 번들 exe **우선 호출 → `python` 폴백 → 둘 다 없으면 구조화된 에러** 순으로 동작.
+- 솔버/서버 부재 시 `/solve-flow-python`이 500 대신 `{"status":"error","code":"NO_RUNTIME",...}` 반환. 프런트는 이를 받아 로컬 근사로 폴백하고 사용자에게 토스트로 명확히 안내.
+- **검증:** PATH에 python이 없는 PC에서 DIMA.exe 실행 → STL 유동/냉각/싱크 분석 정상(번들 exe). 번들까지 제거 시 NO_RUNTIME 안내 확인.
+
+## B-2. 🔴 운영 솔버 실제 버그 2건 수정 (정확도/안정성)
+
+번들 후 실행에서 드러난, 기존 테스트가 못 잡던 결함:
+- **`voxelizer.py`** — `voxels.origin`(trimesh 구버전 속성)에 의존 → trimesh 4.x에서 `AttributeError`로 전(全) 분석 실패. `indices_to_points([[0,0,0]])` 로 교체(버전 무관).
+- **`cooling_solver`/Flask 순환 import** — `app/cooling_solver.py`(고수준 래퍼)와 `python_backend/cooling_solver.py`(저수준 솔버)가 **동명**이라 번들에서 충돌, `solve_mold_cooling` 소실 → **Flask `/api/*` 전체가 그동안 사실상 죽어 있었다**(프런트 조용한 실패로 은폐). 저수준 모듈을 `cooling_core.py`로 개명해 충돌 제거(리포트 L-2 근본 해소).
+- `solve_cli.py` 게이트 JSON 로딩을 `utf-8-sig`로 완화(BOM 견고성).
+
+## B-3. 🟠 백엔드 일원화 (구조, M-1 해소)
+
+- 프런트의 하드코딩 `http://127.0.0.1:5000/api/*` → 상대경로 `/api/*` 로 변경(`app.js`, `main.js`).
+- C# exe가 `/api/*` 를 백그라운드 Flask(동적 포트, `DIMA_FLASK_PORT`)로 **리버스 프록시** → 단일 오리진(8899). 포트 하드코딩/CORS/COEP 문제 소멸, **그간 404였던 AI 멀티리뷰 경로 복구**.
+- 미로드 죽은 코드 `app-connector.js` 격리.
+
+## B-4. 🟡 회귀 방지 (테스트·CI)
+
+- `app/.venv` 구성(Python 3.11.9), `build-python.ps1`에 **pytest 게이트** 내장(실패 시 빌드 중단).
+- `development/smoke_test.ps1` 신규 — 빌드 산출물(`solve_cli.exe`/`server.exe`)을 헤드리스로 실제 실행 검증.
+- 검증 테스트 3종 추가(`TestVoxelizeKnownBox`): 알려진 직육면체를 `voxelize_mesh`로 거쳐 origin 매핑·전체 파이프라인 물리 타당성 확인 → **B-2의 voxelizer 회귀를 영구 차단**.
+
+## B-5. 🟡 결과 신뢰 표시 (정확도)
+
+- 정밀 솔버 실패로 로컬 근사 폴백 시 `STLAnalyzer.getSolverFidelity()='approximate'`, 엔진 배지가 **"근사(로컬) 결과 · 정밀 엔진 미사용"** 경고로 최우선 표시. 사용자가 결과 신뢰도를 즉시 인지.
+
+## 검증 결과 (실측)
+
+- `pytest test_solvers.py` → **21 passed** (기존 18 + 신규 3).
+- `smoke_test.ps1` → solve_cli.exe / server.exe 모두 PASS.
+- **DIMA.exe E2E (포트 8899):** 정적 200 · `/solve-flow-python`(번들 솔버) success · `/api/analyze`(프록시→server.exe) success.
+- NO_RUNTIME 안전망: 솔버 은닉 시 HTTP 200 + 구조화 에러 반환 확인.
+
+검증 환경: numpy 1.26.4 / scipy 1.13.1 / trimesh 4.4.1, Python 3.11.9, PyInstaller 6.21.
+
+## 남은 권고 (범위 밖)
+
+- 솔버 모듈 중복(L-2)은 cooling_core 개명으로 핵심 충돌만 해소 — `app/`·`python_backend/` 완전 단일화는 별도.
+- 대형 JS 파일 모듈 분리(L-3), L-1 죽은 항(`(x-x)**2`) 재검토.
+- 멀티-AI 키 클라이언트 전송(M-6) → 서버 `.env` 이관 권고 유지.

@@ -416,6 +416,14 @@ body[data-theme="black"] .mf-step {
   color: #f4f7fb !important;
 }
 
+/* 다크 모드: 권고/위험/DOE 카드가 흰색(#fbfdff)으로 튀던 문제 수정 */
+body[data-theme="black"] .mf-risk-item,
+body[data-theme="black"] .mf-doe-item,
+body[data-theme="black"] .mf-rec-item {
+  background: #0c1117 !important;
+  border-color: #2b3745 !important;
+}
+
 body[data-theme="black"] .mf-title h1,
 body[data-theme="black"] .mf-card-head h2,
 body[data-theme="black"] .mf-kpi .value,
@@ -682,6 +690,127 @@ body[data-theme="black"] .viewer-cooling-chart {
   font-size: 0.7rem;
   font-weight: 800;
   color: #00d4ff;
+}
+
+.trust-category-grid {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.trust-category-grid div {
+  display: grid;
+  grid-template-columns: 46px 36px 1fr 34px;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.66rem;
+}
+
+.trust-category-grid b {
+  color: #eaf4ff;
+  text-align: right;
+}
+
+.trust-category-grid i {
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg,#00a3ff,#00d46a);
+}
+
+.trust-category-grid em {
+  font-style: normal;
+  color: #ffd166;
+  text-align: right;
+  opacity: 0.9;
+}
+
+.trust-uncertainty-box {
+  display: grid;
+  gap: 3px;
+  margin-top: 7px;
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 209, 102, 0.28);
+  border-radius: 7px;
+  background: rgba(255, 209, 102, 0.06);
+}
+
+.trust-uncertainty-box b {
+  color: #ffd166;
+  font-size: 0.72rem;
+}
+
+.trust-uncertainty-box span {
+  font-size: 0.62rem;
+  line-height: 1.4;
+  opacity: 0.82;
+}
+
+.trust-validation-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.trust-validation-grid label {
+  display: grid;
+  gap: 3px;
+  font-size: 0.62rem;
+  color: inherit;
+  opacity: 0.9;
+}
+
+.trust-validation-grid input,
+.trust-validation-grid select {
+  min-width: 0;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  background: rgba(255,255,255,0.05);
+  color: inherit;
+  padding: 0 7px;
+  font-size: 0.68rem;
+}
+
+.trust-action-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: center;
+  margin-top: 7px;
+}
+
+.trust-apply-btn,
+.trust-reset-btn {
+  width: 100%;
+  height: 30px;
+  border: 1px solid rgba(0, 212, 255, 0.4);
+  border-radius: 7px;
+  background: rgba(0, 212, 255, 0.14);
+  color: #00d4ff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.trust-reset-btn {
+  width: auto;
+  min-width: 82px;
+  border-color: rgba(255, 209, 102, 0.36);
+  background: rgba(255, 209, 102, 0.08);
+  color: #ffd166;
+  padding: 0 9px;
+}
+
+.trust-calibration-status {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(0, 212, 255, 0.22);
+  border-radius: 7px;
+  background: rgba(0, 212, 255, 0.07);
+  color: #bfefff;
+  font-size: 0.64rem;
+  line-height: 1.45;
 }
 
 .trust-panel ul {

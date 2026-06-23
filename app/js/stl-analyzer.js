@@ -42,6 +42,11 @@ const STLAnalyzer = (() => {
   let _lastCoolingPlan = null;
   let _vertexThickness = null;
   let _maxFlowDistance = 0;
+  let _lastMeshQuality = null;
+  let _lastQualityPrediction = null;
+  // 마지막 유동 해석이 정밀 솔버(번들 solve_cli)였는지, 로컬 근사 폴백이었는지 기록.
+  // 결과 신뢰도 배지(getSolverFidelity)와 사용자 알림에 사용한다.
+  let _usedFallbackSolver = false;
   let _isGateSettingMode = false;
   let _draggedGateIndex = -1;
   let _draggedGateOrigPos = null;
@@ -98,7 +103,49 @@ const STLAnalyzer = (() => {
     });
   }
 
-  async function parseSTP(buffer) {
+  const MESH_DETAIL_SETTINGS = {
+    fast: {
+      label: '빠름',
+      linearDeflection: 0.08,
+      angularDeflection: 0.45,
+      resolutionFactor: 0.01,
+      minResolution: 0.35,
+      maxResolution: 2.5
+    },
+    fine: {
+      label: '정밀',
+      linearDeflection: 0.025,
+      angularDeflection: 0.18,
+      resolutionFactor: 0.006,
+      minResolution: 0.2,
+      maxResolution: 1.5
+    },
+    ultra: {
+      label: '초정밀',
+      linearDeflection: 0.008,
+      angularDeflection: 0.08,
+      resolutionFactor: 0.0035,
+      minResolution: 0.12,
+      maxResolution: 0.9
+    }
+  };
+
+  function getMeshDetailKey(detailPreset) {
+    const fromApp = (typeof App !== 'undefined' && App.stl && App.stl.meshDetailQuality) || 'ultra';
+    const key = detailPreset || fromApp;
+    return MESH_DETAIL_SETTINGS[key] ? key : 'ultra';
+  }
+
+  function getMeshDetailSettings(detailPreset) {
+    return MESH_DETAIL_SETTINGS[getMeshDetailKey(detailPreset)] || MESH_DETAIL_SETTINGS.ultra;
+  }
+
+  function getAnalysisResolution(diagonal, detailPreset) {
+    const s = getMeshDetailSettings(detailPreset);
+    return Math.max(s.minResolution, Math.min(s.maxResolution, diagonal * s.resolutionFactor));
+  }
+
+  async function parseSTP(buffer, detailPreset = 'ultra') {
     // SharedArrayBuffer 하드 차단 제거: occt-import-js는 단일 스레드(WASM)로도 동작한다.
     // (Electron/로컬 서버 환경에서 COOP/COEP가 없어도 STEP 파싱이 가능하도록 허용)
     try {
@@ -118,8 +165,16 @@ const STLAnalyzer = (() => {
 
     const uint8Array = new Uint8Array(buffer);
     let result;
+    const meshDetailKey = getMeshDetailKey(detailPreset);
+    const meshDetail = getMeshDetailSettings(meshDetailKey);
+    const meshOptions = {
+      linearUnit: 'millimeter',
+      linearDeflectionType: 'absolute',
+      linearDeflection: meshDetail.linearDeflection,
+      angularDeflection: meshDetail.angularDeflection
+    };
     try {
-      result = occt.ReadStepFile(uint8Array, null);
+      result = occt.ReadStepFile(uint8Array, meshOptions);
     } catch (e) {
       throw new Error('STEP 파일 파싱 중 오류: ' + e.message);
     }
@@ -202,7 +257,11 @@ const STLAnalyzer = (() => {
       metadata: {
         productName,
         faceCount,
-        shellCount
+        shellCount,
+        meshDetailPreset: meshDetailKey,
+        meshDetailLabel: meshDetail.label,
+        linearDeflection: meshDetail.linearDeflection,
+        angularDeflection: meshDetail.angularDeflection
       }
     };
   }
@@ -613,6 +672,118 @@ const STLAnalyzer = (() => {
     _renderer.render(_scene, _camera);
   }
 
+  function evaluateFrontendMeshQuality(geometry) {
+    if (!geometry || !geometry.attributes || !geometry.attributes.position) return null;
+    const pos = geometry.attributes.position.array;
+    const normals = geometry.attributes.normal ? geometry.attributes.normal.array : null;
+    const triCount = Math.floor(pos.length / 9);
+    const vertexCount = Math.floor(pos.length / 3);
+    const issues = [];
+    const recommendations = [];
+    let score = 100;
+    let degenerate = 0;
+    let invalidNormals = 0;
+    const edgeUse = new Map();
+    const key = (x, y, z) => `${Math.round(x * 10000)},${Math.round(y * 10000)},${Math.round(z * 10000)}`;
+    const addEdge = (a, b) => {
+      const k = a < b ? `${a}|${b}` : `${b}|${a}`;
+      edgeUse.set(k, (edgeUse.get(k) || 0) + 1);
+    };
+
+    for (let i = 0; i < triCount; i++) {
+      const p = i * 9;
+      const ax = pos[p], ay = pos[p + 1], az = pos[p + 2];
+      const bx = pos[p + 3], by = pos[p + 4], bz = pos[p + 5];
+      const cx = pos[p + 6], cy = pos[p + 7], cz = pos[p + 8];
+      const ux = bx - ax, uy = by - ay, uz = bz - az;
+      const vx = cx - ax, vy = cy - ay, vz = cz - az;
+      const area2 = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+      if (!Number.isFinite(area2) || area2 < 1e-7) degenerate++;
+      if (normals) {
+        const n = i * 9;
+        for (let j = 0; j < 9; j += 3) {
+          const len = Math.hypot(normals[n + j], normals[n + j + 1], normals[n + j + 2]);
+          if (!Number.isFinite(len) || len < 0.2) invalidNormals++;
+        }
+      }
+      const a = key(ax, ay, az);
+      const b = key(bx, by, bz);
+      const c = key(cx, cy, cz);
+      addEdge(a, b); addEdge(b, c); addEdge(c, a);
+    }
+
+    let boundaryEdges = 0;
+    let nonmanifoldEdges = 0;
+    edgeUse.forEach(count => {
+      if (count === 1) boundaryEdges++;
+      else if (count > 2) nonmanifoldEdges++;
+    });
+
+    geometry.computeBoundingBox();
+    const size = new THREE.Vector3();
+    geometry.boundingBox.getSize(size);
+    const dims = [size.x, size.y, size.z].filter(v => v > 1e-6);
+    const minDim = dims.length ? Math.min(...dims) : 0;
+    const maxDim = dims.length ? Math.max(...dims) : 0;
+    const meshDetailKey = getMeshDetailKey();
+    const meshDetail = getMeshDetailSettings(meshDetailKey);
+    const suggestedPitch = maxDim ? getAnalysisResolution(maxDim, meshDetailKey) : 0;
+    const cellsOnMinDimension = suggestedPitch ? minDim / suggestedPitch : 0;
+
+    if (triCount < 1000) {
+      score -= 12;
+      issues.push('메쉬 삼각형 수가 낮아 결함 위치 정밀도가 떨어질 수 있습니다.');
+      recommendations.push('CAD에서 더 촘촘한 STL/STEP 메쉬로 다시 내보내십시오.');
+    }
+    if (degenerate > 0) {
+      score -= Math.min(20, Math.ceil((degenerate / Math.max(1, triCount)) * 250));
+      issues.push(`0면적 또는 비정상 삼각형 ${degenerate}개가 감지되었습니다.`);
+      recommendations.push('슬리버 면과 중복 면을 제거한 뒤 다시 메쉬를 생성하십시오.');
+    }
+    if (invalidNormals > 0) {
+      score -= Math.min(12, Math.ceil((invalidNormals / Math.max(1, vertexCount)) * 60));
+      issues.push('일부 법선 벡터가 비정상입니다.');
+      recommendations.push('CAD/메쉬 편집기에서 outward normal을 다시 계산하십시오.');
+    }
+    if (boundaryEdges > 0) {
+      score -= Math.min(18, Math.ceil(boundaryEdges / Math.max(20, triCount * 0.02)));
+      issues.push(`열린 경계 엣지 ${boundaryEdges}개가 감지되었습니다.`);
+      recommendations.push('해석 전 구멍을 막고 솔리드 바디로 내보내십시오.');
+    }
+    if (nonmanifoldEdges > 0) {
+      score -= Math.min(20, nonmanifoldEdges);
+      issues.push(`Non-manifold 엣지 ${nonmanifoldEdges}개가 감지되었습니다.`);
+      recommendations.push('겹친 면, T-junction, 내부 중복 쉘을 정리하십시오.');
+    }
+    if (cellsOnMinDimension > 0 && cellsOnMinDimension < 4) {
+      score -= 10;
+      issues.push('최소 두께 대비 복셀 해상도가 거칠 수 있습니다.');
+      recommendations.push('정밀 해석에서는 더 작은 mesh/voxel pitch를 사용하십시오.');
+    }
+
+    score = Math.max(0, Math.min(100, Math.round(score)));
+    const status = score >= 82 && issues.length === 0 ? 'pass' : score >= 55 ? 'warning' : 'fail';
+    return {
+      source: 'frontend_mesh_gate',
+      status,
+      score,
+      triangle_count: triCount,
+      vertex_count: vertexCount,
+      bounds_mm: [size.x, size.y, size.z].map(v => Math.round(v * 100) / 100),
+      watertight: boundaryEdges === 0 && nonmanifoldEdges === 0,
+      winding_consistent: invalidNormals === 0,
+      degenerate_triangles: degenerate,
+      boundary_edges: boundaryEdges,
+      nonmanifold_edges: nonmanifoldEdges,
+      voxel_pitch_mm: suggestedPitch ? Math.round(suggestedPitch * 1000) / 1000 : null,
+      cells_on_min_dimension: Math.round(cellsOnMinDimension * 100) / 100,
+      mesh_detail_preset: meshDetailKey,
+      mesh_detail_label: meshDetail.label,
+      issues,
+      recommendations
+    };
+  }
+
   /* ──────────────────────────────────────
      3. LOAD GEOMETRY + COLOR OVERLAY
   ────────────────────────────────────── */
@@ -638,6 +809,14 @@ const STLAnalyzer = (() => {
 
     _vertexThickness = null;
     computeWallThickness();
+    _lastMeshQuality = evaluateFrontendMeshQuality(_geometry);
+    if (_lastMeshQuality && stlData && stlData.metadata) {
+      _lastMeshQuality.mesh_detail_preset = stlData.metadata.meshDetailPreset || _lastMeshQuality.mesh_detail_preset;
+      _lastMeshQuality.mesh_detail_label = stlData.metadata.meshDetailLabel || _lastMeshQuality.mesh_detail_label;
+      _lastMeshQuality.linear_deflection = stlData.metadata.linearDeflection || null;
+      _lastMeshQuality.angular_deflection = stlData.metadata.angularDeflection || null;
+    }
+    _lastQualityPrediction = null;
 
     // Vertex colors based on draft angle (passing positions for centroid check)
     const colors = computeDraftColors(stlData.positions, stlData.normals);
@@ -659,9 +838,9 @@ const STLAnalyzer = (() => {
     // 메시 와이어프레임 외곽선 오버레이 추가 (신뢰감 부여 및 CAD 감성 극대화)
     const wireframeGeo = new THREE.WireframeGeometry(_geometry);
     const wireframeMat = new THREE.LineBasicMaterial({
-      color: 0x54708a,
+      color: 0x7fb8d8,
       transparent: true,
-      opacity: 0.045,
+      opacity: 0.12,
       depthWrite: false
     });
     const wireframe = new THREE.LineSegments(wireframeGeo, wireframeMat);
@@ -1807,6 +1986,8 @@ const STLAnalyzer = (() => {
     // Defect Predictions
     return {
       issues, score, moldFeatures, diagnostics, recommendation,
+      meshQuality: _lastMeshQuality,
+      qualityPrediction: _lastQualityPrediction,
       defects: { sink: sinkRes, shrinkage: shrinkRes, warpage: warpRes },
       stats: { undercutPct, marginalPct, okPct, triCount, material: mat.name, shrinkRisk, isSimulated: stlData.isSimulated, metadata: stlData.metadata }
     };
@@ -3241,7 +3422,8 @@ const STLAnalyzer = (() => {
     const unreachable = [];
     for (let i = 0; i < positions.length; i += 9) {
       const d = _flowDistances[i / 3];
-      if (d === Infinity || d === undefined || d > 999999) {
+      // 미도달 표기: 로컬은 Infinity, 정밀 솔버는 -1.0 을 사용한다(둘 다 처리).
+      if (d === Infinity || d === undefined || d > 999999 || d === -1.0 || d < 0) {
         unreachable.push({
           pos: new THREE.Vector3(positions[i], positions[i+1], positions[i+2]),
           normal: new THREE.Vector3(normals[i], normals[i+1], normals[i+2])
@@ -3520,8 +3702,10 @@ const STLAnalyzer = (() => {
 
   /* Moldflow 표준 색상 스펙트럼: Blue→Cyan→Green→Yellow→Orange→Red
      t=0 (게이트/최초충진) → t=1 (최후충진/미성형 위험) */
-  function computeFlowColors(positions, distances, maxDist, animPct) {
-    const colors = new Float32Array(positions.length);
+  function computeFlowColors(positions, distances, maxDist, animPct, out) {
+    // out 가 주어지면 기존 색 버퍼에 제자리(in-place) 기록 — 애니메이션 프레임마다
+    // 새 배열을 할당하지 않아 GC 부담과 끊김을 줄인다.
+    const colors = out || new Float32Array(positions.length);
     const targetDist = maxDist * animPct;
     const frontWidth = Math.max(maxDist * 0.04, 0.5);
 
@@ -3701,6 +3885,15 @@ const STLAnalyzer = (() => {
     const graph = buildAdjacencyGraph(positions, epsilon);
     _adjacencyGraph = graph;
 
+    // 기본 충진(냉각 OFF)은 빠른 로컬 계산을 사용한다 — 즉시 표시되고 화면 정점과
+    // 정확히 일치해 전체가 칠해진다. 정밀 솔버(복셀화·열전달 FDM)는 무거워 지연이 크므로
+    // 냉각 분석을 켰을 때만 호출한다.
+    const _coolingOn = (typeof App !== 'undefined' && App.stl && App.stl.coolingEnabled) || false;
+    if (!_coolingOn) {
+      _usedFallbackSolver = false; // 로컬 충진은 정상 모드(저하 아님)
+      return _doFlowCalculationFallback();
+    }
+
     try {
       // 1. ArrayBuffer로 STL 파일 바이너리 취득
       if (typeof App !== 'undefined' && App.stl && App.stl.file) {
@@ -3729,7 +3922,8 @@ const STLAnalyzer = (() => {
 
         const gatesStr = encodeURIComponent(JSON.stringify(gatesData));
         // 복셀 해상도는 모델 크기에 비례하여 동적 조정 (평균 치수의 0.8% ~ 1.5% 수준)
-        const resolution = Math.max(0.3, Math.min(2.5, diag * 0.008));
+        const meshDetailKey = getMeshDetailKey();
+        const resolution = getAnalysisResolution(diag, meshDetailKey);
 
         const coolingEnabled = (typeof App !== 'undefined' && App.stl && App.stl.coolingEnabled) || false;
         const coolantTemp = document.getElementById('slide-mold-temp') ? parseFloat(document.getElementById('slide-mold-temp').value) : 25.0;
@@ -3749,8 +3943,13 @@ const STLAnalyzer = (() => {
 
         const data = await res.json();
         if (data.status === "error") {
-          throw new Error(data.message);
+          const e = new Error(data.message || '솔버 오류');
+          e.code = data.code;   // 예: NO_RUNTIME (분석 엔진 누락)
+          throw e;
         }
+
+        // 정밀 솔버 결과를 정상 수신 — 신뢰도 = 정밀.
+        _usedFallbackSolver = false;
 
         // 3. 복셀 해석 결과(정점별 충진 시각) 매핑
         _flowDistances = new Float32Array(data.vertex_fill_times);
@@ -3759,6 +3958,14 @@ const STLAnalyzer = (() => {
         _vertexSinkRisk = data.vertex_sink_risk ? new Float32Array(data.vertex_sink_risk) : null;
         _cycleTime = data.cycle_time || 0.0;
         _hotSpots = data.hot_spots || [];
+        if (data.mesh_quality) {
+          _lastMeshQuality = data.mesh_quality;
+          const detailKey = getMeshDetailKey();
+          const detail = getMeshDetailSettings(detailKey);
+          _lastMeshQuality.mesh_detail_preset = _lastMeshQuality.mesh_detail_preset || detailKey;
+          _lastMeshQuality.mesh_detail_label = _lastMeshQuality.mesh_detail_label || detail.label;
+        }
+        if (data.quality_prediction) _lastQualityPrediction = data.quality_prediction;
         
         let maxDist = 0;
         for (let i = 0; i < _flowDistances.length; i++) {
@@ -3788,13 +3995,35 @@ const STLAnalyzer = (() => {
           });
         }
 
-        const defects = [
-          { type: 'weld_line', pos: _gatePositions[0].clone(), segments, weldDetails }
-        ];
+        // 게이트별 도달장(국부 다익스트라) — 웰드라인/에어트랩 로컬 검출에 필요.
+        // 정밀 솔버의 weld_lines 가 비어 있어도 로컬 검출로 결함이 표시되도록 한다.
+        const gateArrivalsList = [];
+        _gatePositions.forEach((gp, gIdx) => {
+          const startKey = findClosestGraphNode(gp, graph);
+          if (startKey) {
+            const flowRes = calculateFlowDistances(startKey, graph);
+            const wVal = _gateVelocityRatios[gIdx] !== undefined ? _gateVelocityRatios[gIdx] : 1.0;
+            const arrivals = {};
+            for (const key in flowRes.distances) {
+              const dd = flowRes.distances[key];
+              arrivals[key] = (dd !== Infinity && wVal > 0) ? (dd / wVal) : Infinity;
+            }
+            gateArrivalsList.push({ arrivals, parents: flowRes.parents });
+          }
+        });
 
-        // 에어 트랩 및 수축 등 추가 결함 탐지 (로컬 분석 함수 호출 조합)
-        const localDefects = predictDefects(graph, []);
-        // weld_line을 제외한 에어트랩/수축만 결합
+        // 에어 트랩·수축·웰드라인 로컬 검출 (게이트 도달장 전달)
+        const localDefects = predictDefects(graph, gateArrivalsList);
+
+        const defects = [];
+        // 웰드라인: 솔버가 검출한 세그먼트가 있으면 우선 사용, 없으면 로컬 검출로 대체.
+        if (segments.length > 0) {
+          defects.push({ type: 'weld_line', pos: _gatePositions[0].clone(), segments, weldDetails });
+        } else {
+          const localWeld = localDefects.find(d => d.type === 'weld_line');
+          if (localWeld) defects.push(localWeld);
+        }
+        // 나머지(에어트랩·수축 등) 로컬 결함 결합
         localDefects.forEach(d => {
           if (d.type !== 'weld_line') defects.push(d);
         });
@@ -3809,10 +4038,21 @@ const STLAnalyzer = (() => {
         const totalArea = (positions.length / 9) * 10;
         const diagnostics = _getDiagnostics(minDim, maxDim, totalArea, _material);
 
-        return { maxFlowDistance: _maxFlowDistance, defects, diagnostics };
+        return { maxFlowDistance: _maxFlowDistance, defects, diagnostics, meshQuality: _lastMeshQuality, qualityPrediction: _lastQualityPrediction };
       }
     } catch (err) {
       console.warn("Python Voxel Solver 실패 (로컬 다익스트라로 폴백):", err);
+      // 정밀 솔버 실패 → 근사(로컬) 결과로 표시됨을 사용자에게 명확히 알린다(조용한 저하 방지).
+      _usedFallbackSolver = true;
+      const noRuntime = (err && err.code === 'NO_RUNTIME');
+      if (typeof window !== 'undefined' && typeof window.showToast === 'function') {
+        window.showToast(
+          noRuntime
+            ? '정밀 분석 엔진을 찾을 수 없어 근사(로컬) 결과를 표시합니다. DIMA 재설치를 권장합니다.'
+            : '정밀 솔버 연결 실패 — 근사(로컬) 결과로 대체 표시합니다.',
+          'warn'
+        );
+      }
     }
 
     return _doFlowCalculationFallback();
@@ -3879,7 +4119,7 @@ const STLAnalyzer = (() => {
     const totalArea = (positions.length / 9) * 10;
     const diagnostics = _getDiagnostics(minDim, maxDim, totalArea, _material);
 
-    return { maxFlowDistance: _maxFlowDistance, defects, diagnostics };
+    return { maxFlowDistance: _maxFlowDistance, defects, diagnostics, meshQuality: _lastMeshQuality, qualityPrediction: _lastQualityPrediction };
   }
 
   /* 게이트 추가 */
@@ -3990,6 +4230,19 @@ const STLAnalyzer = (() => {
 
   function setFlowAnimationTime(pct) {
     _flowAnimationTime = pct;
+    // 애니메이션 경량 경로: 유동 오버레이만 활성인 경우, 무거운 recolorGeometry
+    // (새 BufferAttribute 할당·material 갱신·파팅라인 재생성·warp arrow)를 건너뛰고
+    // 기존 색 버퍼만 제자리 갱신한다 → 프레임 끊김 제거.
+    if (_flowOverlayActive && _flowDistances && _geometry && _mesh &&
+        _geometry.attributes.color &&
+        _geometry.attributes.color.array.length === _geometry.attributes.position.array.length &&
+        !_shrinkageOverlayActive && !_sinkOverlayActive && !_warpOverlayActive && !_coolingOverlayActive) {
+      const positions = _geometry.attributes.position.array;
+      const colorAttr = _geometry.attributes.color;
+      computeFlowColors(positions, _flowDistances, _maxFlowDistance, _flowAnimationTime, colorAttr.array);
+      colorAttr.needsUpdate = true;
+      return;
+    }
     recolorGeometry();
   }
 
@@ -4183,6 +4436,43 @@ const STLAnalyzer = (() => {
     return { count: countTotal, area: Math.round(area), severity, confidence, sampleCount: keys.length, details: distinct, recommendations: Array.from(recos) };
   }
 
+  function getCoolingPlanFactor() {
+    const hasPlan = !!(_lastCoolingPlan && Array.isArray(_lastCoolingPlan.channels) && _lastCoolingPlan.channels.length);
+    if (_coolingOverlayActive && hasPlan) return 0.84;
+    if (_coolingOverlayActive || hasPlan) return 0.90;
+    return 1.0;
+  }
+
+  function getProcessWindowModel(mat) {
+    const meltMin = Number.isFinite(mat.TmMin) ? mat.TmMin : _meltTemp - 25;
+    const meltMax = Number.isFinite(mat.TmMax) ? mat.TmMax : _meltTemp + 25;
+    const moldMin = Number.isFinite(mat.TwMin) ? mat.TwMin : _moldTemp - 20;
+    const moldMax = Number.isFinite(mat.TwMax) ? mat.TwMax : _moldTemp + 20;
+    const centerDeviation = (value, min, max) => {
+      const mid = (min + max) / 2;
+      const half = Math.max(1, (max - min) / 2);
+      return Math.min(1.5, Math.abs(value - mid) / half);
+    };
+    const outsideWindow = (value, min, max) => value < min || value > max;
+    const meltDev = centerDeviation(_meltTemp, meltMin, meltMax);
+    const moldDev = centerDeviation(_moldTemp, moldMin, moldMax);
+    const speedDev = Math.min(1.5, Math.abs(_flowRate - 50) / 85);
+    const pressureDev = Math.min(1.5, Math.abs(_pressureLimit - 100) / 110);
+    const outCount = [
+      outsideWindow(_meltTemp, meltMin, meltMax),
+      outsideWindow(_moldTemp, moldMin, moldMax),
+      _flowRate < 15 || _flowRate > 180,
+      _pressureLimit < 45 || _pressureLimit > 220
+    ].filter(Boolean).length;
+    const uncertainty = Math.min(32, Math.round((meltDev * 5) + (moldDev * 7) + (speedDev * 5) + (pressureDev * 4) + (outCount * 5)));
+    return {
+      shrinkFactor: 1 + (moldDev * 0.045) + (pressureDev * 0.030) - Math.min(0.035, (_pressureLimit - 100) / 2500),
+      warpageFactor: 1 + (moldDev * 0.16) + (speedDev * 0.10) + (pressureDev * 0.09) + (outCount * 0.06),
+      uncertainty,
+      outCount
+    };
+  }
+
   function predictShrinkage(graph) {
     const mat = MATERIAL_DB[_material] || MATERIAL_DB.ABS;
     const baseShrink = mat.linearShrinkage || 0.005;
@@ -4205,7 +4495,16 @@ const STLAnalyzer = (() => {
     const nominalThick = thicknessSamples.length ? percentile(thicknessSamples, 0.5) : avgThick;
     const nominalCooling = Math.max(8, calculateCoolingTime(nominalThick, _material));
     const hasGate = _gatePositions && _gatePositions.length > 0 && _maxFlowDistance > 0;
-    const confidence = Math.round(45 + Math.min(1, thicknessSamples.length / 5000) * 25 + (hasGate ? 14 : 0) + (_vertexTemperatures ? 8 : 0));
+    const coolingPlanFactor = getCoolingPlanFactor();
+    const processModel = getProcessWindowModel(mat);
+    const confidence = Math.max(20, Math.min(95, Math.round(
+      45 +
+      Math.min(1, thicknessSamples.length / 5000) * 25 +
+      (hasGate ? 14 : 0) +
+      (_vertexTemperatures ? 8 : 0) +
+      (coolingPlanFactor < 1 ? 5 : 0) -
+      processModel.uncertainty * 0.45
+    )));
     
     let sumShrink = 0;
     let maxShrink = 0;
@@ -4223,14 +4522,14 @@ const STLAnalyzer = (() => {
       if (!Number.isFinite(tLocal) || tLocal <= 0.2) return;
       const dGate = (_flowDistances && Number.isFinite(_flowDistances[idx])) ? _flowDistances[idx] : null;
       const gateProgress = hasGate && dGate != null ? Math.max(0, Math.min(1, dGate / _maxFlowDistance)) : 0.5;
-      const gateFactor = hasGate ? (1.0 + 0.18 * gateProgress) : 1.06;
+      const gateFactor = hasGate ? (1.0 + 0.20 * gateProgress) : 1.10;
       const thicknessDeviation = (tLocal - nominalThick) / Math.max(0.001, nominalThick);
       const thickFactor = 1.0 + Math.max(-0.22, Math.min(0.75, thicknessDeviation)) * 0.34;
       
       const tc = calculateCoolingTime(tLocal, _material);
       const coolingFactor = Math.max(0.90, Math.min(1.25, tc / nominalCooling));
       
-      let sLocal = baseShrink * gateFactor * thickFactor * coolingFactor;
+      let sLocal = baseShrink * gateFactor * thickFactor * coolingFactor * coolingPlanFactor * processModel.shrinkFactor;
       sLocal = Math.max(baseShrink * 0.75, Math.min(baseShrink * 2.10, sLocal));
       
       values.push(sLocal);
@@ -4264,9 +4563,9 @@ const STLAnalyzer = (() => {
     let riskLevel = 'LOW';
     if ((p95Shrink >= baseShrink * 1.75 && highCount >= Math.max(3, count * 0.01)) || highRatio >= 0.04) {
       riskLevel = 'HIGH';
-      recos.add('Increase or verify packing pressure and hold time');
-      recos.add('Check gate size and packing balance');
-      recos.add('Review thick-to-thin transitions before tooling');
+      recos.add('보압/보압시간 검증값을 입력하고 금형 보정 전 수축률을 재계산하세요');
+      recos.add('게이트 크기와 충전 균형을 확인하세요');
+      recos.add('두께 급변부를 금형 제작 전에 보정하세요');
       /*
       recos.add("Holding Pressure 증가");
       recos.add("Holding Time 증가");
@@ -4277,12 +4576,14 @@ const STLAnalyzer = (() => {
     }
     else if (p90Shrink >= baseShrink * 1.30 || medRatio >= 0.08) {
       riskLevel = 'MEDIUM';
-      recos.add('Review cooling uniformity and wall thickness distribution');
+      recos.add('냉각 균일성과 두께 분포를 함께 검토하세요');
       /*
       recos.add("Cooling 균일화");
       */
     }
-    if (!hasGate) recos.add('Add or auto-place a gate to improve shrinkage confidence');
+    if (!hasGate) recos.add('게이트를 지정해야 수축/충전 신뢰도가 올라갑니다');
+    if (coolingPlanFactor >= 1) recos.add('냉각 최적화를 적용하면 두꺼운 영역의 수축 과대평가를 줄일 수 있습니다');
+    if (processModel.outCount > 0) recos.add('수지온도/금형온도/사출속도/압력 중 권장 범위를 벗어난 조건을 보정하세요');
     
     return {
       maxShrinkage: maxShrink * 100,
@@ -4290,6 +4591,8 @@ const STLAnalyzer = (() => {
       globalShrinkage: avgShrink * 100,
       p90Shrinkage: p90Shrink * 100,
       confidence,
+      uncertainty: Math.max(5, Math.min(70, 100 - confidence + (hasGate ? 0 : 10) + (coolingPlanFactor < 1 ? -5 : 8))),
+      paperModel: 'gate-distance + cooling-uniformity + process-window weighted shrinkage',
       sampleCount: count,
       riskLevel,
       details,
@@ -4326,8 +4629,11 @@ const STLAnalyzer = (() => {
     const diffRatio = Math.abs(mat.flowShrinkage - mat.crossFlowShrinkage) / baseShrink;
     const diffShrinkWeight = 1.0 + 2.5 * diffRatio;
     
+    const coolingPlanFactor = getCoolingPlanFactor();
+    const processModel = getProcessWindowModel(mat);
     let coolingImbalance = 1.2;
     if (_runnerType === 'cold') coolingImbalance = 1.5;
+    coolingImbalance *= coolingPlanFactor;
     
     const flowLengthWeight = _maxFlowDistance > 0 ? (1.0 + 1.0 * (_maxFlowDistance / maxDim)) : 1.2;
     
@@ -4355,7 +4661,7 @@ const STLAnalyzer = (() => {
     const ribDensity = ribNodeCount / (keys.length || 1);
     const ribDensityWeight = 1.0 + 3.0 * ribDensity;
     
-    const rawScore = thickVarWeight * diffShrinkWeight * coolingImbalance * flowLengthWeight * ribDensityWeight;
+    const rawScore = thickVarWeight * diffShrinkWeight * coolingImbalance * flowLengthWeight * ribDensityWeight * processModel.warpageFactor;
     let score = Math.min(100, Math.round((rawScore / 30.0) * 100));
     
     const modelCenter = new THREE.Vector3();
@@ -4383,27 +4689,32 @@ const STLAnalyzer = (() => {
       }
     }
     
-    const magnitude = maxDim * (shrinkResult.maxShrinkage / 100) * (score / 100) * 0.3;
+    const magnitude = maxDim * (shrinkResult.maxShrinkage / 100) * (score / 100) * 0.3 * (coolingPlanFactor < 1 ? 0.92 : 1.0);
     
     let risk = 'LOW';
     const recos = new Set();
     if (score >= 70) {
       risk = 'HIGH';
-      recos.add("Cooling Channel 추가");
-      recos.add("Gate 위치 변경");
-      recos.add("Wall Thickness 균일화");
-      recos.add("재질 변경 검토");
+      recos.add("냉각 채널 위치를 최적화하고 냉각 시간 분포를 확인하세요");
+      recos.add("게이트 위치와 유동 길이 편차를 재검토하세요");
+      recos.add("두께 급변부와 리브/보스 구조를 균일화하세요");
+      recos.add("소재 수축률과 실제 PVT 데이터를 확인하세요");
     } else if (score >= 40) {
       risk = 'MEDIUM';
-      recos.add("Rib 구조 최적화");
-      recos.add("Boss 구조 최적화");
+      recos.add("리브 구조를 소재 권장 비율에 맞게 조정하세요");
+      recos.add("보스 주변 두께 편차를 줄이세요");
     }
+    if (coolingPlanFactor >= 1) recos.add("냉각 최적화를 적용해야 변형 예측 신뢰도가 올라갑니다");
+    if (processModel.outCount > 0) recos.add("금형온도, 사출속도, 압력 조건의 검증 범위를 확보하세요");
     
     return {
       score,
       direction,
       magnitude,
       risk,
+      confidence: Math.max(20, Math.min(92, Math.round((shrinkResult.confidence || 45) - processModel.uncertainty * 0.35 + (coolingPlanFactor < 1 ? 6 : -4)))),
+      uncertainty: Math.max(8, Math.min(75, Math.round(100 - (shrinkResult.confidence || 45) + processModel.uncertainty + (coolingPlanFactor < 1 ? -6 : 10)))),
+      paperModel: 'cooling-gradient + process-window uncertainty weighted warpage',
       recommendations: Array.from(recos)
     };
   }
@@ -4808,7 +5119,16 @@ const STLAnalyzer = (() => {
     return colors;
   }
 
-  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, addAutoGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights, getCanvas, onGateRepositioned, onRightClickModel, setPhysicalParams, calculateCoolingTime, setRunnerType, recomputeThermal, setGateParams, toggleSinkOverlay, toggleWarpOverlay, toggleCoolingOverlay, applyOptimalCoolingPlan, setVertexTemperatures, setFlowDistances, setVertexSinkRisk, setMaxFlowDistance, predictSinkMarks, predictShrinkage, predictWarpage, updateWeldLines };
+  // 마지막 유동 해석의 신뢰도: 'precise'(번들 정밀 솔버) | 'approximate'(로컬 폴백).
+  function getSolverFidelity() {
+    return _usedFallbackSolver ? 'approximate' : 'precise';
+  }
+
+  function getMeshQuality() {
+    return _lastMeshQuality;
+  }
+
+  return { resizeViewer, parseSTL, parseSTP, initViewer, loadGeometry, analyze, toggleOverlay, setWireframe, resetCamera, setPullAxis, setFlipAxis, recolorGeometry, updateCoreHelpers, updatePartingLine, setGateSettingMode, isGateSettingMode, onViewerClick, getGatePosition, getGatePositions, addGatePosition, addAutoGatePosition, removeGateAt, recalculateFlow, toggleFlowOverlay, toggleShrinkageOverlay, setFlowAnimationTime, clearGate, highlightCore, resetCoreHighlights, getCanvas, onGateRepositioned, onRightClickModel, setPhysicalParams, calculateCoolingTime, setRunnerType, recomputeThermal, setGateParams, toggleSinkOverlay, toggleWarpOverlay, toggleCoolingOverlay, applyOptimalCoolingPlan, setVertexTemperatures, setFlowDistances, setVertexSinkRisk, setMaxFlowDistance, predictSinkMarks, predictShrinkage, predictWarpage, updateWeldLines, getSolverFidelity, getMeshQuality };
 
 
 
